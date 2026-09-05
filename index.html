@@ -152,6 +152,19 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
 .kfCard img{width:100%;height:56px;object-fit:cover;display:block;background:#000}
 .kfCard .lab{font-size:10px;text-align:center;padding:3px 2px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kfCard .lab b{color:var(--text)}
+/* ── AI 叠加 ── */
+#poseCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2}
+#symBadge{
+  position:absolute;top:8px;left:8px;z-index:3;padding:4px 10px;border-radius:999px;
+  font-size:12px;font-weight:600;background:rgba(8,9,14,.6);backdrop-filter:blur(6px);
+  border:1px solid var(--line);color:var(--muted);display:none;pointer-events:none;white-space:nowrap;
+}
+#symBadge.ok{color:var(--ok);border-color:rgba(52,211,153,.5)}
+#symBadge.warn{color:var(--warn);border-color:rgba(251,191,36,.5)}
+#symBadge.bad{color:#ff6b81;border-color:rgba(255,107,129,.5)}
+.ck{width:22px;height:22px;accent-color:#ff4d8d}
+.pbar{height:8px;border-radius:4px;background:var(--panel2);overflow:hidden;flex:1}
+#aiProgressBar{height:100%;width:0;background:var(--grad);transition:width .2s}
 /* ── 弹层 ── */
 .overlay{
   position:fixed;inset:0;background:rgba(5,6,10,.66);backdrop-filter:blur(3px);
@@ -199,11 +212,14 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
     <div class="title" id="projName">舞帧 · 舞蹈慢动作拆解</div>
     <button class="icon-btn" id="btnMirrorT" title="镜像">🪞 镜像</button>
     <button class="icon-btn" id="btnVoiceT" title="语音教导">🗣 语音</button>
+    <button class="icon-btn" id="btnAI" title="AI 智能拆解">🤖 AI</button>
     <button class="icon-btn" id="btnSettings" title="设置">⚙</button>
   </header>
 
   <div id="stage">
     <video id="video" playsinline webkit-playsinline preload="metadata"></video>
+    <canvas id="poseCanvas"></canvas>
+    <div id="symBadge"></div>
     <div id="subtitle"><span class="num"></span><span class="txt"></span></div>
     <div id="tapHint">点视频两侧 = 逐帧 · 中间 = 播放/暂停</div>
     <div id="followOverlay">
@@ -292,6 +308,34 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
     <h2>我的项目 <button class="close" data-close="ovProjects">完成 ✕</button></h2>
     <div id="projList" style="display:flex;flex-direction:column;gap:8px"></div>
     <button class="btn primary" id="btnImport2">＋ 导入新视频</button>
+  </div>
+</div>
+
+<!-- AI 智能拆解 -->
+<div class="overlay" id="ovAI">
+  <div class="sheet">
+    <h2>🤖 AI 智能拆解 <button class="close" data-close="ovAI">完成 ✕</button></h2>
+    <div class="row" id="aiStatus" style="color:var(--muted);font-size:13px;line-height:1.6"></div>
+    <div class="row"><label>分析精度</label>
+      <select id="aiComplexity"><option value="1">高精度（推荐）</option><option value="0">快速</option></select>
+    </div>
+    <button class="btn primary" id="btnAIAnalyze">🔍 分析本视频姿态</button>
+    <div class="row" id="aiProgWrap" style="display:none">
+      <div class="pbar"><div id="aiProgressBar"></div></div>
+      <button class="btn small" id="btnAICancel">取消</button>
+    </div>
+    <div class="row" id="aiProgText" style="display:none;color:var(--muted);font-size:12px"></div>
+    <hr>
+    <div class="row"><label>自动生成关键帧数量</label>
+      <select id="aiKfCount"><option>4</option><option>6</option><option selected>8</option><option>12</option></select>
+    </div>
+    <button class="btn" id="btnAIAutoKf">⚡ 一键生成关键帧草稿</button>
+    <hr>
+    <div class="row"><label>🦴 骨架叠加</label><input type="checkbox" class="ck" id="aiTogSkeleton"></div>
+    <div class="row"><label>📐 关节角度标注</label><input type="checkbox" class="ck" id="aiTogAngles"></div>
+    <div class="row"><label>〰️ 运动轨迹（手脚 2 秒残影）</label><input type="checkbox" class="ck" id="aiTogTrail"></div>
+    <div class="row"><label>⚖️ 左右对称提示</label><input type="checkbox" class="ck" id="aiTogSymmetry"></div>
+    <div class="row" style="color:var(--muted);font-size:12px">AI 全部运行在手机本地，视频不会上传。分析一次后，播放和逐帧都会自动叠加显示。首次使用需下载模型（约 12MB，一次性），之后离线可用。</div>
   </div>
 </div>
 
@@ -455,6 +499,7 @@ function updateTimeUI(){
   if(!S.scrubbing){$('seek').value=d?(t/d*1000):0;}
   $('fill').style.width=d?(t/d*100)+'%':'0%';
   segmentCheck();
+  try{drawPose();}catch(e){}
 }
 video.addEventListener('play',()=>{$('btnPlay').textContent='⏸';
   if(video.requestVideoFrameCallback)video.requestVideoFrameCallback(onFrame);});
@@ -552,20 +597,24 @@ $('btnSetB').onclick=()=>{S.ab.b=video.currentTime;
 $('btnClearAB').onclick=()=>{S.ab.a=S.ab.b=null;renderAB();};
 
 /* ===================== 关键帧 ===================== */
+function buildKf(v,t){
+  const vw=v.videoWidth,vh=v.videoHeight;
+  const w=Math.min(720,vw),h=Math.max(1,Math.round(w*vh/vw));
+  const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');
+  if(S.mirror){g.translate(w,0);g.scale(-1,1);}
+  g.drawImage(v,0,0,w,h);
+  const full=c.toDataURL('image/jpeg',0.85);
+  const tw=144,th=Math.max(1,Math.round(tw*vh/vw));
+  const c2=document.createElement('canvas');c2.width=tw;c2.height=th;const g2=c2.getContext('2d');
+  if(S.mirror){g2.translate(tw,0);g2.scale(-1,1);}
+  g2.drawImage(v,0,0,tw,th);
+  return{id:uid(),time:t,note:'',full,thumb:c2.toDataURL('image/jpeg',0.7)};
+}
 function capture(){
   if(!S.project||!video.videoWidth){toast('请先导入视频');return;}
   if(S.follow.active){stopFollow();}
   if(!video.paused)video.pause();
-  const vw=video.videoWidth,vh=video.videoHeight;
-  const w=Math.min(720,vw),h=Math.max(1,Math.round(w*vh/vw));
-  const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');
-  if(S.mirror){g.translate(w,0);g.scale(-1,1);}
-  g.drawImage(video,0,0,w,h);
-  const tw=144,th=Math.max(1,Math.round(tw*vh/vw));
-  const c2=document.createElement('canvas');c2.width=tw;c2.height=th;const g2=c2.getContext('2d');
-  if(S.mirror){g2.translate(tw,0);g2.scale(-1,1);}
-  g2.drawImage(video,0,0,tw,th);
-  const kf={id:uid(),time:video.currentTime,note:'',full:c.toDataURL('image/jpeg',0.85),thumb:c2.toDataURL('image/jpeg',0.7)};
+  const kf=buildKf(video,video.currentTime);
   const kfs=S.project.keyframes;kfs.push(kf);kfs.sort((a,b)=>a.time-b.time);
   renderStrip();renderMarks();saveProject();
   toast('已捕获第 '+(kfs.indexOf(kf)+1)+' 拍，写一句口令吧');
@@ -667,6 +716,248 @@ function stopFollow(){if(S.follow.active)S.follow.stop=true;video.pause();
 $('btnFollow').onclick=startFollow;
 $('btnStopFollow').onclick=stopFollow;
 
+/* ===================== AI 智能拆解（本地姿态识别，视频不上传） ===================== */
+const poseCanvas=$('poseCanvas'),poseCtx=poseCanvas.getContext('2d');
+const symBadge=$('symBadge');
+const AI={pose:null,loading:null,busy:false,cancel:false,last:null,_cplx:null,
+  flags:Object.assign({skeleton:true,angles:false,trail:false,symmetry:false},
+    (()=>{try{return JSON.parse(localStorage.getItem('danceFrame.ai')||'{}')}catch(e){return{}}})())};
+function saveAiFlags(){try{localStorage.setItem('danceFrame.ai',JSON.stringify(AI.flags))}catch(e){}}
+const POSE_CONN=[[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32]];
+const ANGLE_DEFS=[['肘',11,13,15],['肘',12,14,16],['肩',13,11,23],['肩',14,12,24],['膝',23,25,27],['膝',24,26,28]];
+const TRAIL_KPS=[[15,'#34d399'],[16,'#ff6b81'],[27,'#60a5fa'],[28,'#fbbf24']];
+
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('脚本加载失败：'+src));document.head.appendChild(s);});}
+function evtOnce(el,ev,timeout){return new Promise((res,rej)=>{
+  const h=()=>{clearTimeout(to);el.removeEventListener(ev,h);res();};
+  const to=setTimeout(()=>{el.removeEventListener(ev,h);rej(new Error('等待'+ev+'超时'));},timeout||3000);
+  el.addEventListener(ev,h);});}
+async function seekVideo(v,t){const p=evtOnce(v,'seeked',2500);v.currentTime=t;await p;}
+
+async function ensureAI(complexity){
+  if(AI.pose&&AI._cplx===complexity)return AI.pose;
+  if(AI.pose){try{await AI.pose.close();}catch(e){}AI.pose=null;AI.loading=null;}
+  if(!AI.loading){
+    AI.loading=(async()=>{
+      if(!window.Pose)await loadScript('ai/pose/pose.js');
+      const p=new window.Pose({locateFile:f=>'ai/pose/'+f});
+      p.setOptions({modelComplexity:complexity,smoothLandmarks:true,enableSegmentation:false,
+        minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+      p.onResults(r=>{AI.last=(r&&r.poseLandmarks)||null;});
+      await p.initialize();
+      AI._cplx=complexity;AI.pose=p;return p;
+    })().catch(e=>{AI.loading=null;throw e;});
+  }
+  return AI.loading;
+}
+function aiStatusText(){
+  const has=S.project&&S.project.pose;
+  return '识别模型：'+(AI.pose?'已就绪':'未加载')+' · 本视频：'+(has?('已分析 '+S.project.pose.n+' 帧'+(S.project.pose.detected?('，'+S.project.pose.detected+' 帧检出人物'):'')):'未分析')
+    +'。'+(AI.pose?'':'首次使用需下载模型文件（约 12MB，一次性），之后离线可用。');
+}
+function renderAI(){
+  $('aiStatus').textContent=aiStatusText();
+  $('btnAIAnalyze').disabled=AI.busy||!S.project;
+  $('btnAIAutoKf').disabled=AI.busy||!S.project||!(S.project&&S.project.pose);
+  $('aiComplexity').disabled=AI.busy;
+  $('aiProgWrap').style.display=AI.busy?'flex':'none';
+  $('aiProgText').style.display=AI.busy?'block':'none';
+  $('aiTogSkeleton').checked=!!AI.flags.skeleton;
+  $('aiTogAngles').checked=!!AI.flags.angles;
+  $('aiTogTrail').checked=!!AI.flags.trail;
+  $('aiTogSymmetry').checked=!!AI.flags.symmetry;
+}
+async function aiAnalyze(){
+  if(AI.busy||!S.project)return;
+  if(S.follow.active)stopFollow();
+  const cplx=parseInt($('aiComplexity').value)||1;
+  AI.busy=true;AI.cancel=false;renderAI();
+  const prog=(p,txt)=>{$('aiProgressBar').style.width=Math.round(p*100)+'%';$('aiProgText').textContent=txt||('分析中… '+Math.round(p*100)+'%');};
+  let av=null;
+  try{
+    prog(0,'加载 AI 模型…');
+    await ensureAI(cplx);
+    renderAI();
+    av=document.createElement('video');av.muted=true;av.playsInline=true;av.preload='auto';av.src=S.url;
+    await evtOnce(av,'loadedmetadata',10000);
+    if(!isFinite(av.duration)){av.currentTime=1e7;await evtOnce(av,'seeked',3000);await new Promise(r=>setTimeout(r,80));av.currentTime=0;await evtOnce(av,'seeked',3000);}
+    const dur=av.duration;
+    const N=Math.min(480,Math.max(4,Math.round(dur*10)));
+    const step=dur/N;
+    const cw=480,ch=Math.max(2,Math.round(cw*av.videoHeight/av.videoWidth));
+    const c=document.createElement('canvas');c.width=cw;c.height=ch;
+    const g=c.getContext('2d');
+    const data=new Float32Array(N*33*4);
+    let detected=0;
+    for(let i=0;i<N;i++){
+      if(AI.cancel)throw Object.assign(new Error('cancel'),{cancel:true});
+      await seekVideo(av,Math.min(dur-0.001,i*step));
+      g.drawImage(av,0,0,cw,ch);
+      AI.last=undefined;
+      await AI.pose.send({image:c});
+      const lms=AI.last;
+      if(lms&&lms.length===33){detected++;
+        for(let k=0;k<33;k++){const p=lms[k];
+          data[(i*33+k)*4]=p.x;data[(i*33+k)*4+1]=p.y;data[(i*33+k)*4+2]=p.z||0;
+          data[(i*33+k)*4+3]=(p.visibility==null?1:p.visibility);}}
+      prog((i+1)/N,'已分析 '+(i+1)+'/'+N+' 帧'+(detected?('，检出 '+detected+' 帧'):''));
+    }
+    if(!detected){toast('没有在画面中检测到人物');return;}
+    S.project.pose={sampleFps:1/step,n:N,complexity:cplx,detected,data};
+    saveProject();
+    AI.flags.skeleton=true;saveAiFlags();
+    toast('AI 分析完成：'+detected+'/'+N+' 帧检测到人物');
+  }catch(e){
+    if(e&&e.cancel)toast('已取消分析');
+    else{toast('AI 分析失败：'+((e&&e.message)||e));try{console.error(e);}catch(_){}}
+  }finally{
+    AI.busy=false;renderAI();
+    if(av){try{av.pause();av.removeAttribute('src');av.load();}catch(_){}}
+  }
+}
+function posePt(P,i,k){const o=(i*33+k)*4,d=P.data;return{x:d[o],y:d[o+1],z:d[o+2],v:d[o+3]};}
+function angDeg(a,b,c){
+  const v1x=a.x-b.x,v1y=a.y-b.y,v2x=c.x-b.x,v2y=c.y-b.y;
+  const m=Math.hypot(v1x,v1y)*Math.hypot(v2x,v2y);
+  if(m<1e-6)return null;
+  const cos=Math.min(1,Math.max(-1,(v1x*v2x+v1y*v2y)/m));
+  return Math.acos(cos)*180/Math.PI;
+}
+function videoRect(){
+  const st=$('stage'),sw=st.clientWidth,sh=st.clientHeight,vw=video.videoWidth||16,vh=video.videoHeight||9;
+  const s=Math.min(sw/vw,sh/vh),w=vw*s,h=vh*s;
+  return{x:(sw-w)/2,y:(sh-h)/2,w,h};
+}
+function drawPose(){
+  symBadge.style.display='none';
+  const P=S.project&&S.project.pose;
+  if(!P||(!AI.flags.skeleton&&!AI.flags.angles&&!AI.flags.trail&&!AI.flags.symmetry))return;
+  const idx=Math.max(0,Math.min(P.n-1,Math.round(video.currentTime*P.sampleFps)));
+  const lm=k=>posePt(P,idx,k);
+  if(lm(11).v<0.3&&lm(12).v<0.3)return;
+  const r=videoRect(),dpr=window.devicePixelRatio||1;
+  const W=poseCanvas.clientWidth,H=poseCanvas.clientHeight;
+  if(!W||!H)return;
+  if(poseCanvas.width!==Math.round(W*dpr)||poseCanvas.height!==Math.round(H*dpr)){
+    poseCanvas.width=Math.round(W*dpr);poseCanvas.height=Math.round(H*dpr);}
+  const g=poseCtx;
+  g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
+  const X=p=>r.x+(S.mirror?1-p.x:p.x)*r.w,Y=p=>r.y+p.y*r.h;
+  if(AI.flags.trail){
+    const win=Math.max(2,Math.round(2*P.sampleFps));
+    for(const[kp,col]of TRAIL_KPS){
+      g.strokeStyle=col;g.lineWidth=3;g.lineCap='round';
+      let prev=null;
+      for(let i=Math.max(0,idx-win);i<=idx;i++){
+        const p=posePt(P,i,kp);
+        if(p.v<0.4){prev=null;continue;}
+        const x=X(p),y=Y(p);
+        if(prev){g.globalAlpha=0.15+0.75*((i-(idx-win))/win);g.beginPath();g.moveTo(prev.x,prev.y);g.lineTo(x,y);g.stroke();}
+        prev={x,y};
+      }
+      g.globalAlpha=1;
+    }
+  }
+  if(AI.flags.skeleton){
+    g.strokeStyle='rgba(126,249,255,.9)';g.lineWidth=3;g.lineCap='round';
+    for(const[a,b]of POSE_CONN){
+      const pa=lm(a),pb=lm(b);
+      if(pa.v<0.4||pb.v<0.4)continue;
+      g.beginPath();g.moveTo(X(pa),Y(pa));g.lineTo(X(pb),Y(pb));g.stroke();
+    }
+    g.fillStyle='#7ef9ff';
+    for(const k of[11,12,13,14,15,16,23,24,25,26,27,28]){
+      const p=lm(k);if(p.v<0.4)continue;
+      g.beginPath();g.arc(X(p),Y(p),4,0,Math.PI*2);g.fill();
+    }
+  }
+  if(AI.flags.angles){
+    g.font='bold 12px system-ui';g.textAlign='center';
+    for(const[name,a,b,c]of ANGLE_DEFS){
+      const pa=lm(a),pb=lm(b),pc=lm(c);
+      if(pa.v<0.5||pb.v<0.5||pc.v<0.5)continue;
+      const deg=angDeg(pa,pb,pc);if(deg==null)continue;
+      const x=X(pb),y=Y(pb);
+      const txt=name+' '+Math.round(deg)+'°';
+      g.fillStyle='rgba(8,9,14,.7)';
+      const tw=g.measureText(txt).width;
+      g.fillRect(x-tw/2-4,y-24,tw+8,17);
+      g.fillStyle='#ffd166';
+      g.fillText(txt,x,y-11);
+    }
+  }
+  if(AI.flags.symmetry){
+    const torso=(Math.hypot(lm(11).x-lm(23).x,lm(11).y-lm(23).y)+Math.hypot(lm(12).x-lm(24).x,lm(12).y-lm(24).y))/2;
+    if(torso>0.02&&lm(15).v>0.4&&lm(16).v>0.4){
+      const dArm=Math.abs((lm(11).y-lm(15).y)/torso-(lm(12).y-lm(16).y)/torso);
+      const dLeg=Math.abs((lm(23).y-lm(25).y)/torso-(lm(24).y-lm(26).y)/torso);
+      const worst=Math.max(dArm,dLeg);
+      symBadge.textContent='⚖ 左右对称差 臂'+Math.round(dArm*100)+'% · 腿'+Math.round(dLeg*100)+'%';
+      symBadge.className=worst<0.1?'ok':(worst<0.25?'warn':'bad');
+      symBadge.style.display='block';
+    }
+  }
+}
+function poseEnergy(P){
+  const J=[11,12,13,14,15,16,23,24,25,26,27,28];
+  const W=[1,1,1.2,1.2,1.6,1.6,0.8,0.8,1.3,1.3,1.2,1.2];
+  const e=new Float32Array(P.n);
+  for(let i=1;i<P.n;i++){
+    let s=0,ws=0;
+    for(let j=0;j<J.length;j++){
+      const a=posePt(P,i-1,J[j]),b=posePt(P,i,J[j]);
+      const v=Math.min(a.v,b.v);
+      if(v>0.3){s+=W[j]*Math.hypot(b.x-a.x,b.y-a.y);ws+=W[j];}
+    }
+    e[i]=ws?s/ws:0;
+  }
+  const sm=new Float32Array(P.n);
+  for(let i=0;i<P.n;i++){let s=0,c=0;
+    for(let j=Math.max(0,i-1);j<=Math.min(P.n-1,i+1);j++){s+=e[j];c++;}
+    sm[i]=s/c;}
+  return sm;
+}
+async function aiAutoKeyframes(K){
+  if(AI.busy||!S.project)return;
+  const P=S.project.pose;
+  if(!P){toast('请先运行「分析本视频姿态」');return;}
+  if(S.follow.active)stopFollow();
+  AI.busy=true;renderAI();
+  try{
+    const e=poseEnergy(P);
+    const minGap=Math.max(4,Math.round(P.sampleFps));
+    const order=[];
+    for(let i=1;i<P.n;i++)order.push(i);
+    order.sort((a,b)=>e[b]-e[a]);
+    const chosen=[];
+    for(const i of order){
+      if(chosen.every(j=>Math.abs(i-j)>=minGap)){chosen.push(i);if(chosen.length>=K)break;}
+    }
+    chosen.sort((a,b)=>a-b);
+    const times=chosen.map(i=>i/P.sampleFps).filter(t=>!S.project.keyframes.some(k=>Math.abs(k.time-t)<0.4));
+    if(!times.length){toast('这些拍点已有关键帧');return;}
+    const av=document.createElement('video');av.muted=true;av.playsInline=true;av.src=S.url;
+    await evtOnce(av,'loadedmetadata',10000);
+    let added=0;
+    for(const t of times){
+      await seekVideo(av,t);
+      S.project.keyframes.push(buildKf(av,t));added++;
+    }
+    S.project.keyframes.sort((a,b)=>a.time-b.time);
+    renderStrip();renderMarks();updateSubtitle();saveProject();
+    toast('AI 生成了 '+added+' 拍草稿，请补口令');
+    try{av.pause();av.removeAttribute('src');av.load();}catch(_){}
+  }catch(e){toast('生成失败：'+((e&&e.message)||e));}
+  AI.busy=false;renderAI();
+}
+$('btnAI').onclick=()=>{renderAI();$('ovAI').classList.add('show');};
+$('btnAIAnalyze').onclick=aiAnalyze;
+$('btnAICancel').onclick=()=>{AI.cancel=true;};
+$('btnAIAutoKf').onclick=()=>aiAutoKeyframes(parseInt($('aiKfCount').value)||8);
+for(const[id,key]of[['aiTogSkeleton','skeleton'],['aiTogAngles','angles'],['aiTogTrail','trail'],['aiTogSymmetry','symmetry']])
+  $(id).onchange=e=>{AI.flags[key]=e.target.checked;saveAiFlags();drawPose();};
+window.addEventListener('resize',()=>{try{drawPose();}catch(e){}});
+
 /* ===================== 项目管理 ===================== */
 async function importFile(file){
   if(!file)return;
@@ -687,6 +978,7 @@ async function openProject(p){
   video.src=S.url;applySpeed(S.speed);applyMirror(!!p.mirror);
   $('projName').textContent=p.name;
   $('dropzone').classList.add('hide');
+  try{poseCtx.clearRect(0,0,poseCanvas.width,poseCanvas.height);symBadge.style.display='none';}catch(e){}
   renderStrip();renderMarks();updateSubtitle();updateTimeUI();
   $('setFps').value=S.fps;
 }
