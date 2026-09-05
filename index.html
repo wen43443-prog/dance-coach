@@ -662,7 +662,8 @@ async function startFollow(){
   $('followOverlay').classList.remove('show');
   try{if(S.wakeLock){S.wakeLock.release();S.wakeLock=null;}}catch(e){}
 }
-function stopFollow(){if(S.follow.active)S.follow.stop=true;video.pause();}
+function stopFollow(){if(S.follow.active)S.follow.stop=true;video.pause();
+  if(synth)try{synth.cancel();}catch(e){}}
 $('btnFollow').onclick=startFollow;
 $('btnStopFollow').onclick=stopFollow;
 
