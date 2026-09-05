@@ -7,8 +7,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="舞帧">
+<meta name="description" content="导入舞蹈视频，慢放逐帧拆解，捕获关键帧写口令，语音领练。">
 <title>舞帧 · 舞蹈慢动作拆解</title>
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
 :root{
@@ -26,7 +28,7 @@ body{
 }
 button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
 #app{
-  max-width:560px;margin:0 auto;height:100dvh;
+  max-width:560px;margin:0 auto;height:100vh;height:100dvh;
   display:flex;flex-direction:column;
   padding:calc(env(safe-area-inset-top) + 6px) 10px calc(env(safe-area-inset-bottom) + 8px);
   gap:8px;
@@ -321,7 +323,7 @@ const $=id=>document.getElementById(id);
 const uid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-function fmt(t){if(!isFinite(t))t=0;const m=Math.floor(t/60),s=t-m*60;return String(m).padStart(2,'0')+':'+s.toFixed(1).padStart(4,'0');}
+function fmt(t){if(!isFinite(t))t=0;const tenths=Math.round(Math.max(0,t)*10);const m=Math.floor(tenths/600),s=(tenths%600)/10;return String(m).padStart(2,'0')+':'+s.toFixed(1).padStart(4,'0');}
 let toastTimer=null;
 function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2200);}
 
@@ -347,7 +349,13 @@ async function dbGet(id){const db=await openDB();return new Promise((res,rej)=>{
 async function dbPut(p){const db=await openDB();return new Promise((res,rej)=>{const t=db.transaction('projects','readwrite');t.objectStore('projects').put(p);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);});}
 async function dbDel(id){const db=await openDB();return new Promise((res,rej)=>{const t=db.transaction('projects','readwrite');t.objectStore('projects').delete(id);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);});}
 let saveTimer=null;
-function saveProject(){if(!S.project)return;S.project.updatedAt=Date.now();clearTimeout(saveTimer);saveTimer=setTimeout(()=>{dbPut(S.project).catch(()=>toast('保存失败：存储空间可能不足'));},400);}
+function flushSave(){if(!S.project)return;clearTimeout(saveTimer);saveTimer=null;
+  dbPut(S.project).catch(()=>toast('保存失败：存储空间可能不足'));}
+function saveProject(){if(!S.project)return;S.project.updatedAt=Date.now();
+  clearTimeout(saveTimer);saveTimer=setTimeout(flushSave,300);}
+/* iOS 切后台/杀进程前强制落盘，避免防抖丢数据 */
+document.addEventListener('visibilitychange',()=>{if(document.hidden)flushSave();});
+window.addEventListener('pagehide',flushSave);
 
 /* ===================== 语音教导 ===================== */
 const synth=window.speechSynthesis||null;
@@ -369,16 +377,18 @@ function speak(text,onend){
     u.lang='zh-CN';if(zhVoice)u.voice=zhVoice;u.rate=S.voiceRate;
     if(onend)u.onend=onend;synth.speak(u);}catch(e){if(onend)onend();}
 }
-function waitSpeechOrTimeout(ms){return new Promise(res=>{if(!synth||!S.voiceOn||!synth.speaking){setTimeout(res,300);return;}
-  let done=false;const fin=()=>{if(!done){done=true;res();}};
-  const iv=setInterval(()=>{if(!synth.speaking){clearInterval(iv);fin();}},100);
-  setTimeout(()=>{clearInterval(iv);fin();},ms);});}
+function waitSpeechOrTimeout(ms){return new Promise(res=>{
+  const busy=()=>synth&&synth.speaking===true||synth&&synth.pending===true;
+  if(!synth||!S.voiceOn||!busy()){setTimeout(res,300);return;}
+  let done=false;const fin=()=>{if(!done){done=true;clearInterval(iv);res();}};
+  const iv=setInterval(()=>{if(!busy())fin();},100);
+  setTimeout(fin,ms);});}
 
 /* ===================== 视频核心 ===================== */
 function applySpeed(v){S.speed=clamp(v,0.1,1);
   try{video.playbackRate=S.speed;video.preservesPitch=true;}catch(e){}
   try{video.webkitPreservesPitch=true;}catch(e){}
-  $('speedLabel').textContent=S.speed.toFixed(2).replace(/0$/,'')+'×';
+  $('speedLabel').textContent=(Math.round(S.speed*100)/100)+'×';
   $('speedSlider').value=Math.round(S.speed*100);
   document.querySelectorAll('.speedRow .presets button').forEach(b=>b.classList.toggle('on',Math.abs(parseFloat(b.dataset.s)-S.speed)<0.001));
 }
@@ -502,7 +512,7 @@ $('stage').addEventListener('click',e=>{
 
 /* ===================== 时间轴 / A-B ===================== */
 const seekEl=$('seek');
-seekEl.addEventListener('pointerdown',()=>{S.scrubbing=true;});
+seekEl.addEventListener('pointerdown',()=>{S.scrubbing=true;if(S.follow.active)stopFollow();});
 seekEl.addEventListener('pointerup',()=>{S.scrubbing=false;});
 seekEl.addEventListener('input',()=>{
   if(!S.project||!video.duration)return;
@@ -612,32 +622,35 @@ function playUntil(end){return new Promise(res=>{
   video.play().then(()=>requestAnimationFrame(check)).catch(fin);
 });}
 async function startFollow(){
+  if(S.follow.active){toast('领练已在进行中');return;}
   const kfs=S.project&&S.project.keyframes;
   if(!kfs||!kfs.length){toast('请先捕获至少一个关键帧');return;}
-  S.follow={active:true,stop:false};
+  const session={active:true,stop:false};
+  S.follow=session;
   $('followOverlay').classList.add('show');
   try{S.wakeLock=await navigator.wakeLock.request('screen');}catch(e){}
   video.pause();
   const d=video.duration;
   for(let i=0;i<kfs.length;i++){
-    if(S.follow.stop)break;
+    if(session.stop)break;
     $('followStep').textContent='第 '+(i+1)+' 拍 / 共 '+kfs.length+' 拍';
     await seekTo(kfs[i].time);highlightCard(i);
     const note=(kfs[i].note||'').trim();
     if(S.voiceOn&&note){speak('第'+(i+1)+'拍，'+note);await waitSpeechOrTimeout(6000);}
     else{await sleep(600);}
-    if(S.follow.stop)break;
+    if(session.stop)break;
     const end=(i+1<kfs.length)?kfs[i+1].time:Math.min(d||1e9,kfs[i].time+4);
     await playUntil(end);
-    if(S.follow.stop)break;
+    if(session.stop)break;
     await sleep(500);
   }
   $('followStep').textContent='领练结束，跟着音乐来一遍吧！';
   await sleep(900);
-  S.follow.active=false;$('followOverlay').classList.remove('show');
+  if(S.follow===session)S.follow={active:false,stop:false};
+  $('followOverlay').classList.remove('show');
   try{if(S.wakeLock){S.wakeLock.release();S.wakeLock=null;}}catch(e){}
 }
-function stopFollow(){S.follow.stop=true;video.pause();}
+function stopFollow(){if(S.follow.active)S.follow.stop=true;video.pause();}
 $('btnFollow').onclick=startFollow;
 $('btnStopFollow').onclick=stopFollow;
 
@@ -665,7 +678,9 @@ async function openProject(p){
   $('setFps').value=S.fps;
 }
 async function renderProjectList(){
-  const list=await dbAll();list.sort((a,b)=>b.updatedAt-a.updatedAt);
+  let list=[];
+  try{list=await dbAll();}catch(e){$('projList').innerHTML='<div style="color:var(--muted);font-size:13px">读取存储失败（无痕模式？）</div>';return;}
+  list.sort((a,b)=>b.updatedAt-a.updatedAt);
   const box=$('projList');box.innerHTML='';
   if(!list.length){box.innerHTML='<div style="color:var(--muted);font-size:13px">还没有项目，导入一个视频开始吧。</div>';return;}
   for(const p of list){
@@ -684,8 +699,17 @@ async function renderProjectList(){
   }
 }
 async function refreshOpenLast(){
-  const list=await dbAll();
+  let list=[];
+  try{list=await dbAll();}catch(e){return;}
   $('btnOpenLast').style.display=list.length?'':'none';
+}
+/* 启动时自动恢复上次的项目 */
+async function autoResume(){
+  let list=[];
+  try{list=await dbAll();}catch(e){return;}
+  if(!list.length)return;
+  list.sort((a,b)=>b.updatedAt-a.updatedAt);
+  try{const p=await dbGet(list[0].id);if(p&&p.videoBlob)openProject(p);}catch(e){}
 }
 
 /* ===================== 弹层 / 设置 ===================== */
@@ -743,10 +767,17 @@ if('serviceWorker' in navigator&&(location.protocol==='https:'||['localhost','12
   try{navigator.serviceWorker.register('sw.js');}catch(e){}
 }
 
+/* 视频加载失败兜底（如存储的视频损坏） */
+video.addEventListener('error',()=>{
+  if(!S.project||!video.error)return;
+  $('dropzone').classList.remove('hide');
+  toast('视频加载失败，请重新导入');
+});
+
 /* 启动 */
 applySpeed(0.5);applyVoice(S.voiceOn);applyMirror(false);
 $('tapHint').style.display=S.showHint?'':'none';
-refreshOpenLast();
+refreshOpenLast();autoResume();
 window.addEventListener('beforeunload',()=>{saveProject();if(synth)try{synth.cancel();}catch(e){}});
 </script>
 </body>
