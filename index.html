@@ -476,24 +476,36 @@ function stepFrame(dir){
   if(!video.paused)video.pause();
   const dt=1/S.fps;
   if(dir>0&&video.requestVideoFrameCallback){
-    /* 先注册回调再播放：新帧一呈现立即暂停，保证只前进一帧 */
+    /* 先注册回调再播放；起播时浏览器可能重新呈现"当前帧"，
+       只有 mediaTime 超过当前时间半个帧长才算真正前进了一帧 */
     let done=false;
-    video.requestVideoFrameCallback((now,meta)=>{
-      done=true;video.pause();
-      if(meta&&meta.mediaTime!=null){
+    const startCt=video.currentTime;
+    const tryFrame=(now,meta)=>{
+      if(done)return;
+      if(meta&&meta.mediaTime>startCt+dt*0.5){
+        done=true;video.pause();
         noteFrame(meta.mediaTime);
         if(Math.abs(video.currentTime-meta.mediaTime)>0.0005){try{video.currentTime=meta.mediaTime;}catch(e){}}
+      }else if(!video.paused){
+        video.requestVideoFrameCallback(tryFrame);
       }
-    });
+    };
+    video.requestVideoFrameCallback(tryFrame);
     video.play().catch(()=>{});
-    /* 兜底：rVFC 迟迟不触发（页面被遮挡等极端情况）时，暂停并按帧长前进 */
+    /* 兜底：rVFC 不触发（页面被遮挡等）时也要保证前进一步。
+       仅当位置仍停在起点（该步从未完成、且无后续操作改写位置）时才执行，
+       避免迟到的定时器污染之后的步进/拖动 */
     setTimeout(()=>{
       if(done)return;
+      done=true;
       if(!video.paused)video.pause();
-      video.currentTime=clamp(video.currentTime+dt,0,Math.max(0,(video.duration||0)-0.001));
-    },150);
+      if(video.currentTime>=startCt-0.002&&video.currentTime<startCt+dt*0.5){
+        video.currentTime=clamp(startCt+dt+0.002,0,Math.max(0,(video.duration||0)-0.001));
+      }
+    },250);
   }else{
-    const target=dir>0?video.currentTime+dt+0.0005:video.currentTime-dt-0.002;
+    /* 前进：+一帧再加一点越过帧边界；后退：-一帧再留一点落在上一帧内 */
+    const target=dir>0?video.currentTime+dt+0.002:video.currentTime-dt+0.001;
     video.currentTime=clamp(target,0,Math.max(0,(video.duration||0)-0.001));
   }
 }
