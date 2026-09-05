@@ -6,6 +6,7 @@ import os
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+os.chdir(HERE)
 
 
 def token():
