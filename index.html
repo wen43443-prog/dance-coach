@@ -145,9 +145,11 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
 }
 #kfStrip .emptyTip{color:var(--muted);font-size:13px;padding:8px}
 .kfCard{
+  position:relative;
   flex:0 0 auto;width:78px;border-radius:10px;overflow:hidden;background:var(--panel);border:1px solid var(--line);
   display:flex;flex-direction:column;user-select:none;
 }
+.kfCard .mk{position:absolute;top:3px;right:3px;background:var(--ok);color:#03291c;font-size:10px;font-weight:800;border-radius:999px;padding:1px 5px}
 .kfCard.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .kfCard img{width:100%;height:56px;object-fit:cover;display:block;background:#000}
 .kfCard .lab{font-size:10px;text-align:center;padding:3px 2px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -334,6 +336,7 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
     <div class="row"><label>🦴 骨架叠加</label><input type="checkbox" class="ck" id="aiTogSkeleton"></div>
     <div class="row"><label>📐 关节角度标注</label><input type="checkbox" class="ck" id="aiTogAngles"></div>
     <div class="row"><label>〰️ 运动轨迹（手脚 2 秒残影）</label><input type="checkbox" class="ck" id="aiTogTrail"></div>
+    <div class="row"><label>👻 上一帧残影（洋葱皮）</label><input type="checkbox" class="ck" id="aiTogGhost"></div>
     <div class="row"><label>⚖️ 左右对称提示</label><input type="checkbox" class="ck" id="aiTogSymmetry"></div>
     <div class="row" style="color:var(--muted);font-size:12px">AI 全部运行在手机本地，视频不会上传。分析一次后，播放和逐帧都会自动叠加显示。首次使用需下载模型（约 12MB，一次性），之后离线可用。</div>
   </div>
@@ -346,6 +349,14 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
     <img id="kfEditImg" alt="关键帧">
     <div id="kfEditTime"></div>
     <textarea id="kfEditNote" placeholder="写给自己的动作口令，例如：重心移到左脚，右手向上划圆，眼看前方"></textarea>
+    <div class="row"><label>🎤 语音口令（领练时用你的声音）</label></div>
+    <div class="row" style="gap:6px">
+      <button class="btn small" id="btnKfRec">🎤 录音</button>
+      <button class="btn small" id="btnKfPlay" style="display:none">▶ 试听</button>
+      <button class="btn small danger" id="btnKfAudioDel" style="display:none">删除录音</button>
+    </div>
+    <div class="row" id="recState" style="display:none;color:var(--warn);font-size:13px;font-weight:700">● 录音中，再点一次「停止」…</div>
+    <div class="row"><label>✓ 这拍已掌握</label><input type="checkbox" class="ck" id="kfMastered"></div>
     <div class="grid2">
       <button class="btn primary" id="btnKfSave">保存</button>
       <button class="btn" id="btnKfGoto">跳到这一拍</button>
@@ -354,6 +365,26 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
       <button class="btn" id="btnKfDownload">⬇ 保存图片</button>
       <button class="btn danger" id="btnKfDelete">删除这一拍</button>
     </div>
+  </div>
+</div>
+
+<!-- 领练选项 -->
+<div class="overlay" id="ovFollow">
+  <div class="sheet">
+    <h2>🎙 领练模式 <button class="close" data-close="ovFollow">✕</button></h2>
+    <div class="row"><label>训练方式</label>
+      <select id="flMode">
+        <option value="normal">标准领练</option>
+        <option value="progress">渐进提速（0.25×→1×）</option>
+        <option value="quiz">随机抽考</option>
+      </select>
+    </div>
+    <div class="row" id="flPassRow" style="display:none"><label>每档速度练几遍</label>
+      <select id="flPasses"><option>1</option><option>2</option><option selected>3</option></select>
+    </div>
+    <div class="row"><label>只练未掌握的拍</label><input type="checkbox" class="ck" id="flOnlyUn"></div>
+    <div class="row"><label>每拍前倒计时 3·2·1</label><input type="checkbox" class="ck" id="flCount" checked></div>
+    <button class="btn primary" id="btnFollowGo">▶ 开始领练</button>
   </div>
 </div>
 
@@ -590,8 +621,8 @@ function renderAB(){
     box.style.width=((S.ab.b-S.ab.a)/video.duration*100)+'%';btn.style.display='';
   }else{box.style.display='none';btn.style.display='none';}
 }
-$('btnSetA').onclick=()=>{S.ab.a=video.currentTime;toast('已设 A 点');renderAB();};
-$('btnSetB').onclick=()=>{S.ab.b=video.currentTime;
+$('btnSetA').onclick=()=>{S.ab.a=Math.round(video.currentTime*S.fps)/S.fps;toast('已设 A 点（已对齐帧网格）');renderAB();};
+$('btnSetB').onclick=()=>{S.ab.b=Math.round(video.currentTime*S.fps)/S.fps;
   if(S.ab.a!=null&&S.ab.b!=null&&S.ab.b<=S.ab.a){const t=S.ab.a;S.ab.a=S.ab.b;S.ab.b=t;}
   toast('已设 B 点，播放到 B 自动回 A');renderAB();};
 $('btnClearAB').onclick=()=>{S.ab.a=S.ab.b=null;renderAB();};
@@ -628,7 +659,7 @@ function renderStrip(){
   if(!kfs.length){strip.innerHTML='<div class="emptyTip">暂停在想要记住的画面，点「📸 拆解此帧」把它变成一拍，再写上口令，语音就会教你。</div>';return;}
   kfs.forEach((kf,i)=>{
     const card=document.createElement('div');card.className='kfCard';card.dataset.id=kf.id;
-    card.innerHTML='<img alt="第'+(i+1)+'拍"><div class="lab"><b>第'+(i+1)+'拍</b> '+fmt(kf.time)+'</div>';
+    card.innerHTML='<img alt="第'+(i+1)+'拍"><div class="lab"><b>第'+(i+1)+'拍</b> '+fmt(kf.time)+'</div>'+(kf.mastered?'<div class="mk">✓</div>':'');
     card.querySelector('img').src=kf.thumb;
     card.onclick=()=>{video.currentTime=kf.time;};
     strip.appendChild(card);
@@ -648,18 +679,69 @@ function openKfEditor(kf){
   $('kfEditImg').src=kf.full;
   $('kfEditTime').textContent='第 '+(idx+1)+' 拍 · 时间点 '+fmt(kf.time);
   $('kfEditNote').value=kf.note||'';
+  $('kfMastered').checked=!!kf.mastered;
+  renderKfAudio();
   $('ovKf').classList.add('show');
 }
-$('btnKfSave').onclick=()=>{if(S.editKf){S.editKf.note=$('kfEditNote').value;saveProject();updateSubtitle();}
-  $('ovKf').classList.remove('show');toast('已保存口令');};
-$('btnKfGoto').onclick=()=>{if(S.editKf){video.currentTime=S.editKf.time;$('ovKf').classList.remove('show');}};
+/* —— 语音口令录制 —— */
+let mediaRec=null,recChunks=[],recStream=null,audioPlayer=null;
+function stopAudio(){if(audioPlayer){try{audioPlayer.pause();}catch(e){}audioPlayer=null;}}
+function kfEditorCleanup(){
+  if(mediaRec&&mediaRec.state==='recording'){try{mediaRec.stop();}catch(e){}}
+  stopAudio();
+  $('recState').style.display='none';
+  const b=$('btnKfRec');b.textContent='🎤 录音';
+}
+function renderKfAudio(){
+  const has=!!(S.editKf&&S.editKf.audio);
+  $('btnKfPlay').style.display=has?'':'none';
+  $('btnKfAudioDel').style.display=has?'':'none';
+  const b=$('btnKfRec');
+  b.textContent=(mediaRec&&mediaRec.state==='recording')?'⏹ 停止':'🎤 录音';
+  $('recState').style.display=(mediaRec&&mediaRec.state==='recording')?'flex':'none';
+}
+async function toggleRec(){
+  if(!S.editKf)return;
+  if(mediaRec&&mediaRec.state==='recording'){mediaRec.stop();renderKfAudio();return;}
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){toast('此浏览器不支持录音');return;}
+  try{
+    recStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const mime=['audio/mp4','audio/webm;codecs=opus','audio/webm',''].find(m=>m===''||(window.MediaRecorder&&MediaRecorder.isTypeSupported(m)));
+    mediaRec=mime?new MediaRecorder(recStream,{mimeType:mime}):new MediaRecorder(recStream);
+  }catch(e){toast('无法使用麦克风：'+((e&&e.message)||e));return;}
+  recChunks=[];
+  mediaRec.ondataavailable=e=>{if(e.data&&e.data.size)recChunks.push(e.data);};
+  mediaRec.onstop=()=>{
+    try{recStream.getTracks().forEach(t=>t.stop());}catch(e){}
+    const blob=new Blob(recChunks,{type:(mediaRec&&mediaRec.mimeType)||'audio/webm'});
+    if(S.editKf){S.editKf.audio=blob;saveProject();toast('口令已录制，领练时用你的声音');}
+    renderKfAudio();
+  };
+  mediaRec.start();
+  renderKfAudio();
+}
+function playKfAudio(){
+  if(!S.editKf||!S.editKf.audio)return;
+  stopAudio();
+  const a=new Audio(URL.createObjectURL(S.editKf.audio));
+  audioPlayer=a;
+  const fin=()=>{try{URL.revokeObjectURL(a.src);}catch(e){}if(audioPlayer===a)audioPlayer=null;};
+  a.onended=fin;a.onerror=fin;
+  a.play().catch(fin);
+}
+$('btnKfRec').onclick=toggleRec;
+$('btnKfPlay').onclick=playKfAudio;
+$('btnKfAudioDel').onclick=()=>{if(S.editKf){delete S.editKf.audio;saveProject();renderKfAudio();toast('已删除录音');}};
+$('btnKfSave').onclick=()=>{if(S.editKf){S.editKf.note=$('kfEditNote').value;S.editKf.mastered=$('kfMastered').checked;saveProject();updateSubtitle();renderStrip();}
+  kfEditorCleanup();$('ovKf').classList.remove('show');toast('已保存口令');};
+$('btnKfGoto').onclick=()=>{if(S.editKf){video.currentTime=S.editKf.time;kfEditorCleanup();$('ovKf').classList.remove('show');}};
 $('btnKfDownload').onclick=()=>{if(!S.editKf)return;const idx=S.project.keyframes.indexOf(S.editKf);
   const a=document.createElement('a');a.href=S.editKf.full;a.download='舞帧_第'+(idx+1)+'拍.jpg';a.click();};
 $('btnKfDelete').onclick=()=>{if(!S.editKf)return;
   if(!confirm('确定删除这一拍吗？'))return;
   const i=S.project.keyframes.indexOf(S.editKf);
   S.project.keyframes.splice(i,1);S.editKf=null;
-  $('ovKf').classList.remove('show');renderStrip();renderMarks();updateSubtitle();saveProject();toast('已删除');};
+  kfEditorCleanup();$('ovKf').classList.remove('show');renderStrip();renderMarks();updateSubtitle();saveProject();toast('已删除');};
 $('btnEditNear').onclick=()=>{
   if(!S.project)return;
   const t=video.currentTime;let best=null,bd=0.6;
@@ -672,7 +754,6 @@ async function seekTo(t){return new Promise(res=>{
   const done=()=>{video.removeEventListener('seeked',done);res();};
   video.addEventListener('seeked',done);video.currentTime=t;setTimeout(done,1200);});}
 function playUntil(end){return new Promise(res=>{
-  applySpeed(S.speed);
   let finished=false;
   const fin=()=>{if(finished)return;finished=true;clearInterval(iv);video.pause();res();};
   const check=()=>{
@@ -682,45 +763,106 @@ function playUntil(end){return new Promise(res=>{
   const iv=setInterval(check,100);
   video.play().then(()=>requestAnimationFrame(check)).catch(fin);
 });}
-async function startFollow(){
+/* 口令播放：有真人录音放录音，否则 TTS 朗读 */
+function playNote(kf){return new Promise(res=>{
+  if(kf.audio){
+    stopAudio();
+    const url=URL.createObjectURL(kf.audio);
+    const a=new Audio(url);audioPlayer=a;
+    let done=false;const fin=()=>{if(done)return;done=true;try{URL.revokeObjectURL(url);}catch(e){}if(audioPlayer===a)audioPlayer=null;res();};
+    a.onended=fin;a.onerror=fin;
+    try{a.play().catch(fin);}catch(e){fin();}
+    setTimeout(fin,15000);
+  }else if(S.voiceOn&&kf.note&&kf.note.trim()){
+    let done=false;const fin=()=>{if(!done){done=true;res();}};
+    speak(kf.note.trim(),fin);setTimeout(fin,8000);
+  }else res();
+});}
+async function countdown(session){
+  if(!session.opts.countdown)return;
+  for(const d of['3','2','1']){
+    if(session.stop)return;
+    $('followStep').textContent=d;
+    if(S.voiceOn){speak(d);await waitSpeechOrTimeout(900);}
+    else{await sleep(650);}
+  }
+  if(session.stop)return;
+  $('followStep').textContent='走！';
+  if(S.voiceOn){speak('走！');await waitSpeechOrTimeout(700);}
+  else{await sleep(400);}
+}
+async function startFollow(opts){
   if(S.follow.active){toast('领练已在进行中');return;}
-  const kfs=S.project&&S.project.keyframes;
-  if(!kfs||!kfs.length){toast('请先捕获至少一个关键帧');return;}
-  const session={active:true,stop:false};
+  let kfs=(S.project&&S.project.keyframes)||[];
+  if(!kfs.length){toast('请先捕获至少一个关键帧');return;}
+  if(opts.onlyUn){
+    kfs=kfs.filter(k=>!k.mastered);
+    if(!kfs.length){toast('所有拍都已掌握！去编辑里取消「已掌握」标记');return;}
+  }
+  if(opts.mode==='quiz')kfs=kfs.slice().sort(()=>Math.random()-0.5);
+  const session={active:true,stop:false,opts};
   S.follow=session;
   $('followOverlay').classList.add('show');
   try{S.wakeLock=await navigator.wakeLock.request('screen');}catch(e){}
   video.pause();
   const d=video.duration;
-  for(let i=0;i<kfs.length;i++){
-    if(session.stop)break;
-    $('followStep').textContent='第 '+(i+1)+' 拍 / 共 '+kfs.length+' 拍';
-    await seekTo(kfs[i].time);highlightCard(i);
-    const note=(kfs[i].note||'').trim();
-    if(S.voiceOn&&note){speak('第'+(i+1)+'拍，'+note);await waitSpeechOrTimeout(6000);}
-    else{await sleep(600);}
-    if(session.stop)break;
-    const end=(i+1<kfs.length)?kfs[i+1].time:Math.min(d||1e9,kfs[i].time+4);
-    await playUntil(end);
-    if(session.stop)break;
-    await sleep(500);
+  const speeds=opts.mode==='progress'?[0.25,0.5,0.75,1]:[S.speed];
+  const passes=opts.mode==='progress'?opts.passes:1;
+  try{
+  outer:
+  for(let r=0;r<speeds.length;r++){
+    for(let p=0;p<passes;p++){
+      if(session.stop)break outer;
+      video.playbackRate=speeds[r];
+      for(let i=0;i<kfs.length;i++){
+        if(session.stop)break outer;
+        const kf=kfs[i];
+        const gi=S.project.keyframes.indexOf(kf);
+        $('followStep').textContent=(opts.mode==='progress'?'档 '+(r+1)+'/'+speeds.length+' · '+speeds[r]+'× · 第 '+(p+1)+' 遍 · ':'')+'第 '+(gi+1)+' 拍';
+        await seekTo(kf.time);highlightCard(gi);
+        await playNote(kf);
+        if(session.stop)break outer;
+        await sleep(250);
+        await countdown(session);
+        if(session.stop)break outer;
+        const later=S.project.keyframes.filter(k=>k.time>kf.time+0.05).map(k=>k.time);
+        const end=later.length?Math.min(...later):Math.min(d||1e9,kf.time+4);
+        await playUntil(end);
+        if(session.stop)break outer;
+        await sleep(450);
+      }
+    }
   }
-  $('followStep').textContent='领练结束，跟着音乐来一遍吧！';
-  await sleep(900);
-  if(S.follow===session)S.follow={active:false,stop:false};
-  $('followOverlay').classList.remove('show');
-  try{if(S.wakeLock){S.wakeLock.release();S.wakeLock=null;}}catch(e){}
+  }finally{
+    $('followStep').textContent='领练结束，跟着音乐来一遍吧！';
+    await sleep(800);
+    applySpeed(S.speed);
+    if(S.follow===session)S.follow={active:false,stop:false};
+    $('followOverlay').classList.remove('show');
+    stopAudio();
+    try{if(S.wakeLock){S.wakeLock.release();S.wakeLock=null;}}catch(e){}
+  }
 }
 function stopFollow(){if(S.follow.active)S.follow.stop=true;video.pause();
-  if(synth)try{synth.cancel();}catch(e){}}
-$('btnFollow').onclick=startFollow;
+  if(synth)try{synth.cancel();}catch(e){}
+  stopAudio();}
+function renderFollow(){$('flPassRow').style.display=$('flMode').value==='progress'?'flex':'none';}
+$('btnFollow').onclick=()=>{
+  if(!S.project||!S.project.keyframes.length){toast('请先捕获至少一个关键帧');return;}
+  renderFollow();$('ovFollow').classList.add('show');};
+$('flMode').onchange=renderFollow;
+$('btnFollowGo').onclick=()=>{
+  $('ovFollow').classList.remove('show');
+  startFollow({mode:$('flMode').value,passes:parseInt($('flPasses').value)||3,
+    onlyUn:$('flOnlyUn').checked,countdown:$('flCount').checked});
+};
 $('btnStopFollow').onclick=stopFollow;
 
 /* ===================== AI 智能拆解（本地姿态识别，视频不上传） ===================== */
 const poseCanvas=$('poseCanvas'),poseCtx=poseCanvas.getContext('2d');
 const symBadge=$('symBadge');
 const AI={pose:null,loading:null,busy:false,cancel:false,last:null,_cplx:null,
-  flags:Object.assign({skeleton:true,angles:false,trail:false,symmetry:false},
+  flags:Object.assign({skeleton:true,angles:false,trail:false,ghost:false,symmetry:false},
     (()=>{try{return JSON.parse(localStorage.getItem('danceFrame.ai')||'{}')}catch(e){return{}}})())};
 function saveAiFlags(){try{localStorage.setItem('danceFrame.ai',JSON.stringify(AI.flags))}catch(e){}}
 const POSE_CONN=[[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32]];
@@ -765,6 +907,7 @@ function renderAI(){
   $('aiTogSkeleton').checked=!!AI.flags.skeleton;
   $('aiTogAngles').checked=!!AI.flags.angles;
   $('aiTogTrail').checked=!!AI.flags.trail;
+  $('aiTogGhost').checked=!!AI.flags.ghost;
   $('aiTogSymmetry').checked=!!AI.flags.symmetry;
 }
 async function aiAnalyze(){
@@ -828,13 +971,31 @@ function videoRect(){
   const s=Math.min(sw/vw,sh/vh),w=vw*s,h=vh*s;
   return{x:(sw-w)/2,y:(sh-h)/2,w,h};
 }
+/* 上一帧残影（洋葱皮）：ghostBuf 存上一帧画面，叠在当前帧上 */
+let ghostBuf=null,ghostBufT=-1,ghostShow=null;
+function drawGhost(g,r){
+  const t=video.currentTime;
+  if(t!==ghostBufT){
+    if(ghostBuf&&Math.abs(t-ghostBufT)<=2.5/S.fps+0.001)ghostShow=ghostBuf;
+    else ghostShow=null;
+    if(!ghostBuf||ghostBuf.width!==video.videoWidth||ghostBuf.height!==video.videoHeight){
+      ghostBuf=document.createElement('canvas');ghostBuf.width=video.videoWidth;ghostBuf.height=video.videoHeight;}
+    ghostBuf.getContext('2d').drawImage(video,0,0);
+    ghostBufT=t;
+  }
+  if(!ghostShow)return;
+  g.globalAlpha=0.38;
+  if(S.mirror){g.save();g.translate(r.x+r.w,r.y);g.scale(-1,1);
+    g.drawImage(ghostShow,0,0,ghostShow.width,ghostShow.height,0,0,r.w,r.h);g.restore();}
+  else g.drawImage(ghostShow,0,0,ghostShow.width,ghostShow.height,r.x,r.y,r.w,r.h);
+  g.globalAlpha=1;
+}
 function drawPose(){
   symBadge.style.display='none';
   const P=S.project&&S.project.pose;
-  if(!P||(!AI.flags.skeleton&&!AI.flags.angles&&!AI.flags.trail&&!AI.flags.symmetry))return;
-  const idx=Math.max(0,Math.min(P.n-1,Math.round(video.currentTime*P.sampleFps)));
-  const lm=k=>posePt(P,idx,k);
-  if(lm(11).v<0.3&&lm(12).v<0.3)return;
+  const vecOn=!!(P&&(AI.flags.skeleton||AI.flags.angles||AI.flags.trail));
+  const ghostOn=!!(AI.flags.ghost&&video.videoWidth);
+  if(!vecOn&&!ghostOn&&!AI.flags.symmetry)return;
   const r=videoRect(),dpr=window.devicePixelRatio||1;
   const W=poseCanvas.clientWidth,H=poseCanvas.clientHeight;
   if(!W||!H)return;
@@ -842,6 +1003,10 @@ function drawPose(){
     poseCanvas.width=Math.round(W*dpr);poseCanvas.height=Math.round(H*dpr);}
   const g=poseCtx;
   g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
+  if(ghostOn)drawGhost(g,r);
+  if(!P)return;
+  const idx=Math.max(0,Math.min(P.n-1,Math.round(video.currentTime*P.sampleFps)));
+  const lm=k=>posePt(P,idx,k);
   const X=p=>r.x+(S.mirror?1-p.x:p.x)*r.w,Y=p=>r.y+p.y*r.h;
   if(AI.flags.trail){
     const win=Math.max(2,Math.round(2*P.sampleFps));
@@ -954,7 +1119,7 @@ $('btnAI').onclick=()=>{renderAI();$('ovAI').classList.add('show');};
 $('btnAIAnalyze').onclick=aiAnalyze;
 $('btnAICancel').onclick=()=>{AI.cancel=true;};
 $('btnAIAutoKf').onclick=()=>aiAutoKeyframes(parseInt($('aiKfCount').value)||8);
-for(const[id,key]of[['aiTogSkeleton','skeleton'],['aiTogAngles','angles'],['aiTogTrail','trail'],['aiTogSymmetry','symmetry']])
+for(const[id,key]of[['aiTogSkeleton','skeleton'],['aiTogAngles','angles'],['aiTogTrail','trail'],['aiTogGhost','ghost'],['aiTogSymmetry','symmetry']])
   $(id).onchange=e=>{AI.flags[key]=e.target.checked;saveAiFlags();drawPose();};
 window.addEventListener('resize',()=>{try{drawPose();}catch(e){}});
 
@@ -1018,7 +1183,7 @@ async function autoResume(){
 }
 
 /* ===================== 弹层 / 设置 ===================== */
-document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).classList.remove('show'));
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{if(b.dataset.close==='ovKf')kfEditorCleanup();$(b.dataset.close).classList.remove('show');});
 document.querySelectorAll('.overlay').forEach(ov=>ov.addEventListener('click',e=>{if(e.target===ov&&ov.id!=='ovKf')ov.classList.remove('show');}));
 $('btnProjects').onclick=()=>{renderProjectList();$('ovProjects').classList.add('show');};
 $('btnSettings').onclick=async()=>{
