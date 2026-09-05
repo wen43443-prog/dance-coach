@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d0e13">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="舞帧">
+<title>舞帧 · 舞蹈慢动作拆解</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+:root{
+  --bg:#0d0e13; --panel:#151722; --panel2:#1d2030; --line:#2a2e42;
+  --text:#eef0f6; --muted:#9aa0b4; --accent:#ff4d8d; --accent2:#7c5cff;
+  --ok:#34d399; --warn:#fbbf24;
+  --grad:linear-gradient(135deg,#ff4d8d,#7c5cff);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  overscroll-behavior:none;touch-action:manipulation;
+}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+#app{
+  max-width:560px;margin:0 auto;height:100dvh;
+  display:flex;flex-direction:column;
+  padding:calc(env(safe-area-inset-top) + 6px) 10px calc(env(safe-area-inset-bottom) + 8px);
+  gap:8px;
+}
+/* ── 顶栏 ── */
+header{display:flex;align-items:center;gap:6px}
+header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{
+  min-width:40px;height:36px;padding:0 10px;border-radius:10px;background:var(--panel);
+  color:var(--muted);font-size:13px;display:inline-flex;align-items:center;justify-content:center;gap:4px;
+  border:1px solid var(--line);
+}
+.icon-btn.on{color:#fff;border-color:var(--accent);background:linear-gradient(135deg,rgba(255,77,141,.25),rgba(124,92,255,.25))}
+/* ── 舞台 ── */
+#stage{
+  position:relative;flex:1;min-height:0;border-radius:14px;overflow:hidden;
+  background:#000;border:1px solid var(--line);
+}
+#video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+#video.mirror{transform:scaleX(-1)}
+#subtitle{
+  position:absolute;left:50%;transform:translateX(-50%);bottom:10px;
+  max-width:92%;padding:7px 14px;border-radius:12px;text-align:center;
+  background:rgba(8,9,14,.62);backdrop-filter:blur(8px);
+  font-size:15px;line-height:1.45;pointer-events:none;display:none;
+}
+#subtitle.show{display:block}
+#subtitle .num{color:var(--accent);font-weight:700;margin-right:6px}
+#subtitle .empty-note{color:var(--muted)}
+#tapHint{
+  position:absolute;top:10px;left:50%;transform:translateX(-50%);
+  padding:5px 12px;border-radius:999px;font-size:12px;color:var(--muted);
+  background:rgba(8,9,14,.55);pointer-events:none;white-space:nowrap;transition:opacity .5s;
+}
+#followOverlay{
+  position:absolute;inset:0;background:rgba(10,11,18,.82);backdrop-filter:blur(4px);
+  display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:5;text-align:center;padding:20px;
+}
+#followOverlay.show{display:flex}
+#followOverlay .big{font-size:18px;font-weight:700}
+#followOverlay .step{color:var(--muted);font-size:14px}
+#btnStopFollow{
+  padding:12px 34px;border-radius:999px;background:var(--grad);color:#fff;font-size:16px;font-weight:700;
+}
+#dropzone{
+  position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;background:radial-gradient(120% 100% at 50% 0%,#1b1430 0%,#0d0e13 70%);text-align:center;padding:24px;
+}
+#dropzone.hide{display:none}
+#dropzone .logo{
+  width:84px;height:84px;border-radius:26px;background:var(--grad);
+  display:flex;align-items:center;justify-content:center;font-size:44px;font-weight:800;color:#fff;
+  box-shadow:0 10px 30px rgba(255,77,141,.35);
+}
+#dropzone h1{font-size:20px;margin:0}
+#dropzone p{margin:0;color:var(--muted);font-size:14px;line-height:1.7}
+#dropzone .feats{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;max-width:320px}
+#dropzone .feats span{font-size:12px;color:var(--muted);background:var(--panel);border:1px solid var(--line);padding:4px 10px;border-radius:999px}
+/* ── 通用按钮 ── */
+.btn{
+  padding:11px 16px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);
+  color:var(--text);font-size:14px;font-weight:600;user-select:none;
+}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--grad);border:none;color:#fff}
+.btn.danger{color:#ff6b81;border-color:#4a2530}
+.btn.small{padding:7px 12px;font-size:13px;border-radius:10px}
+/* ── 时间轴 ── */
+#timelineWrap{display:flex;flex-direction:column;gap:6px}
+#track{position:relative;height:30px}
+#track .rail{position:absolute;left:0;right:0;top:12px;height:6px;border-radius:3px;background:var(--panel2)}
+#track .fill{position:absolute;left:0;top:12px;height:6px;border-radius:3px;background:var(--grad);width:0}
+#track .abbox{position:absolute;top:5px;height:20px;background:rgba(124,92,255,.22);border:1px solid rgba(124,92,255,.6);border-radius:5px;display:none}
+#track .kfmark{position:absolute;top:2px;width:3px;height:26px;border-radius:2px;background:var(--accent);box-shadow:0 0 6px rgba(255,77,141,.8)}
+#seek{
+  position:absolute;inset:0;width:100%;margin:0;-webkit-appearance:none;appearance:none;background:transparent;
+}
+#seek::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#fff;border:3px solid var(--accent);box-shadow:0 2px 8px rgba(0,0,0,.6)}
+#seek::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:#fff;border:3px solid var(--accent)}
+#timeRow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+#timeRow .t{font-variant-numeric:tabular-nums;color:var(--text);font-weight:600}
+#timeRow .spacer{flex:1}
+/* ── 控制区 ── */
+#controls{display:flex;flex-direction:column;gap:8px}
+.stepRow{display:flex;align-items:center;justify-content:center;gap:10px}
+.stepRow .stepBtn{
+  flex:1;max-width:130px;padding:14px 6px;border-radius:14px;background:var(--panel);border:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px;color:var(--muted);
+}
+.stepRow .stepBtn b{font-size:20px;color:var(--text)}
+#btnPlay{
+  width:68px;height:68px;border-radius:50%;background:var(--grad);color:#fff;font-size:26px;
+  box-shadow:0 8px 24px rgba(255,77,141,.4);display:flex;align-items:center;justify-content:center;
+}
+.speedRow{display:flex;align-items:center;gap:8px}
+.speedRow .presets{display:flex;gap:5px}
+.speedRow .presets button{
+  padding:6px 10px;border-radius:9px;font-size:12px;font-weight:700;background:var(--panel);border:1px solid var(--line);color:var(--muted);
+}
+.speedRow .presets button.on{color:#fff;background:linear-gradient(135deg,rgba(255,77,141,.3),rgba(124,92,255,.3));border-color:var(--accent)}
+#speedSlider{flex:1;-webkit-appearance:none;appearance:none;height:6px;border-radius:3px;background:var(--panel2)}
+#speedSlider::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:#fff;border:3px solid var(--accent2)}
+#speedSlider::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid var(--accent2)}
+#speedLabel{font-size:13px;font-weight:700;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.actionRow{display:flex;gap:8px}
+.actionRow .btn{flex:1;padding:13px 6px;font-size:15px;display:flex;align-items:center;justify-content:center;gap:6px}
+/* ── 关键帧条 ── */
+#kfSection{display:flex;flex-direction:column;gap:6px}
+#kfSection .head{display:flex;align-items:center;font-size:13px;color:var(--muted)}
+#kfSection .head .spacer{flex:1}
+#kfStrip{
+  display:flex;gap:8px;overflow-x:auto;padding:2px;min-height:86px;align-items:center;
+  scrollbar-width:thin;
+}
+#kfStrip .emptyTip{color:var(--muted);font-size:13px;padding:8px}
+.kfCard{
+  flex:0 0 auto;width:78px;border-radius:10px;overflow:hidden;background:var(--panel);border:1px solid var(--line);
+  display:flex;flex-direction:column;user-select:none;
+}
+.kfCard.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.kfCard img{width:100%;height:56px;object-fit:cover;display:block;background:#000}
+.kfCard .lab{font-size:10px;text-align:center;padding:3px 2px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kfCard .lab b{color:var(--text)}
+/* ── 弹层 ── */
+.overlay{
+  position:fixed;inset:0;background:rgba(5,6,10,.66);backdrop-filter:blur(3px);
+  display:none;align-items:flex-end;justify-content:center;z-index:20;
+}
+.overlay.show{display:flex}
+.sheet{
+  width:100%;max-width:560px;max-height:86dvh;overflow-y:auto;
+  background:var(--panel);border-radius:20px 20px 0 0;padding:16px 16px calc(env(safe-area-inset-bottom) + 16px);
+  display:flex;flex-direction:column;gap:12px;
+}
+.sheet h2{margin:0;font-size:17px;display:flex;align-items:center}
+.sheet h2 .close{margin-left:auto;color:var(--muted);font-size:15px;padding:4px 8px}
+.sheet .row{display:flex;align-items:center;gap:10px;font-size:14px}
+.sheet .row label{flex:1}
+.sheet hr{border:none;border-top:1px solid var(--line);width:100%;margin:4px 0}
+.sheet input[type=number],.sheet select,.sheet textarea{
+  background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:10px;font-size:14px;font-family:inherit;
+}
+.sheet textarea{width:100%;min-height:90px;resize:vertical}
+.sheet .grid2{display:flex;gap:8px}
+.sheet .grid2 .btn{flex:1}
+#kfEditImg{width:100%;border-radius:12px;background:#000;display:block}
+#kfEditTime{color:var(--muted);font-size:13px}
+.projItem{
+  display:flex;align-items:center;gap:10px;padding:12px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);
+}
+.projItem .info{flex:1;min-width:0}
+.projItem .info .n{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.projItem .info .m{font-size:12px;color:var(--muted);margin-top:2px}
+/* ── Toast ── */
+#toast{
+  position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 96px);transform:translateX(-50%) translateY(8px);
+  background:rgba(20,22,34,.95);border:1px solid var(--line);color:var(--text);
+  padding:10px 18px;border-radius:999px;font-size:14px;z-index:50;opacity:0;pointer-events:none;
+  transition:opacity .25s,transform .25s;max-width:86vw;text-align:center;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <button class="icon-btn" id="btnProjects" title="项目列表">☰</button>
+    <div class="title" id="projName">舞帧 · 舞蹈慢动作拆解</div>
+    <button class="icon-btn" id="btnMirrorT" title="镜像">🪞 镜像</button>
+    <button class="icon-btn" id="btnVoiceT" title="语音教导">🗣 语音</button>
+    <button class="icon-btn" id="btnSettings" title="设置">⚙</button>
+  </header>
+
+  <div id="stage">
+    <video id="video" playsinline webkit-playsinline preload="metadata"></video>
+    <div id="subtitle"><span class="num"></span><span class="txt"></span></div>
+    <div id="tapHint">点视频两侧 = 逐帧 · 中间 = 播放/暂停</div>
+    <div id="followOverlay">
+      <div class="big">🎙 领练模式进行中</div>
+      <div class="step" id="followStep">准备中…</div>
+      <button id="btnStopFollow">■ 停止领练</button>
+    </div>
+    <div id="dropzone">
+      <div class="logo">舞</div>
+      <h1>把舞蹈视频变成逐帧教练</h1>
+      <p>导入一段舞蹈视频<br>慢放 · 逐帧 · 捕获关键帧写口令 · 语音带你练</p>
+      <button class="btn primary" id="btnImport" style="padding:14px 34px;font-size:16px">＋ 导入舞蹈视频</button>
+      <button class="btn" id="btnOpenLast" style="display:none">打开上次的项目</button>
+      <div class="feats"><span>0.1× 慢放</span><span>逐帧步进</span><span>镜像观看</span><span>A-B 循环</span><span>语音口令</span><span>本地保存</span></div>
+    </div>
+  </div>
+
+  <div id="timelineWrap">
+    <div id="track">
+      <div class="rail"></div>
+      <div class="abbox" id="abBox"></div>
+      <div class="fill" id="fill"></div>
+      <div id="kfMarks"></div>
+      <input type="range" id="seek" min="0" max="1000" value="0" step="0.01">
+    </div>
+    <div id="timeRow">
+      <button class="btn small" id="btnSetA">设 A</button>
+      <button class="btn small" id="btnSetB">设 B</button>
+      <button class="btn small" id="btnClearAB" style="display:none">✕</button>
+      <span class="t" id="timeLabel">00:00.0 / 00:00.0</span>
+      <span class="spacer"></span>
+      <span id="fpsLabel"></span>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div class="stepRow">
+      <button class="stepBtn" id="btnPrev"><b>⏮</b>上一帧</button>
+      <button id="btnPlay">▶</button>
+      <button class="stepBtn" id="btnNext"><b>⏭</b>下一帧</button>
+    </div>
+    <div class="speedRow">
+      <div class="presets">
+        <button data-s="0.1">0.1×</button><button data-s="0.25">0.25×</button>
+        <button data-s="0.5">0.5×</button><button data-s="0.75">0.75×</button><button data-s="1">1×</button>
+      </div>
+      <input type="range" id="speedSlider" min="10" max="100" value="50">
+      <span id="speedLabel">0.50×</span>
+    </div>
+    <div class="actionRow">
+      <button class="btn primary" id="btnCapture">📸 拆解此帧</button>
+      <button class="btn" id="btnEditNear">✏️ 编辑口令</button>
+      <button class="btn" id="btnFollow">🎙 领练模式</button>
+    </div>
+  </div>
+
+  <div id="kfSection">
+    <div class="head"><span id="kfCount">关键帧 0</span><span class="spacer"></span><span>左右滑动查看</span></div>
+    <div id="kfStrip"><div class="emptyTip">暂停在想要记住的画面，点「📸 拆解此帧」把它变成一拍，再写上口令，语音就会教你。</div></div>
+  </div>
+</div>
+
+<!-- 设置 -->
+<div class="overlay" id="ovSettings">
+  <div class="sheet">
+    <h2>设置 <button class="close" data-close="ovSettings">完成 ✕</button></h2>
+    <div class="row"><label>🗣 语音教导（读到口令时朗读）</label><input type="checkbox" id="setVoice" style="width:22px;height:22px;accent-color:#ff4d8d"></div>
+    <div class="row"><label>🎙 领练语速</label>
+      <select id="setVoiceRate">
+        <option value="0.8">慢 0.8×</option><option value="0.9">0.9×</option>
+        <option value="1" selected>正常 1×</option><option value="1.2">快 1.2×</option>
+      </select>
+    </div>
+    <div class="row"><label>🪞 镜像模式</label><input type="checkbox" id="setMirror" style="width:22px;height:22px;accent-color:#ff4d8d"></div>
+    <div class="row"><label>帧率（逐帧步长，自动检测不准时可手改）</label><input type="number" id="setFps" min="5" max="120" step="1" style="width:80px"></div>
+    <div class="row"><label>显示操作提示</label><input type="checkbox" id="setHint" style="width:22px;height:22px;accent-color:#ff4d8d"></div>
+    <hr>
+    <div class="row" id="storageInfo" style="color:var(--muted);font-size:13px"></div>
+    <div class="row" style="color:var(--muted);font-size:12px">所有数据只保存在本机浏览器中，不会上传。换手机需重新导入。</div>
+  </div>
+</div>
+
+<!-- 项目列表 -->
+<div class="overlay" id="ovProjects">
+  <div class="sheet">
+    <h2>我的项目 <button class="close" data-close="ovProjects">完成 ✕</button></h2>
+    <div id="projList" style="display:flex;flex-direction:column;gap:8px"></div>
+    <button class="btn primary" id="btnImport2">＋ 导入新视频</button>
+  </div>
+</div>
+
+<!-- 关键帧编辑 -->
+<div class="overlay" id="ovKf">
+  <div class="sheet">
+    <h2>编辑这一拍 <button class="close" data-close="ovKf">✕</button></h2>
+    <img id="kfEditImg" alt="关键帧">
+    <div id="kfEditTime"></div>
+    <textarea id="kfEditNote" placeholder="写给自己的动作口令，例如：重心移到左脚，右手向上划圆，眼看前方"></textarea>
+    <div class="grid2">
+      <button class="btn primary" id="btnKfSave">保存</button>
+      <button class="btn" id="btnKfGoto">跳到这一拍</button>
+    </div>
+    <div class="grid2">
+      <button class="btn" id="btnKfDownload">⬇ 保存图片</button>
+      <button class="btn danger" id="btnKfDelete">删除这一拍</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept="video/*,.mp4,.mov,.m4v,.webm" style="display:none">
+<div id="toast"></div>
+
+<script>
+'use strict';
+/* ===================== 工具 ===================== */
+const $=id=>document.getElementById(id);
+const uid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function fmt(t){if(!isFinite(t))t=0;const m=Math.floor(t/60),s=t-m*60;return String(m).padStart(2,'0')+':'+s.toFixed(1).padStart(4,'0');}
+let toastTimer=null;
+function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2200);}
+
+/* ===================== 状态 ===================== */
+const video=$('video');
+const S={
+  project:null,url:null,fps:30,fpsDetected:false,
+  speed:0.5,mirror:false,voiceOn:true,voiceRate:1,showHint:true,
+  scrubbing:false,lastSeg:-2,follow:{active:false,stop:false},
+  ab:{a:null,b:null},wakeLock:null,editKf:null,fpsSamples:[],
+};
+try{const p=JSON.parse(localStorage.getItem('danceFrame.settings')||'{}');
+  if(p.voiceOn!==undefined)S.voiceOn=p.voiceOn; if(p.voiceRate)S.voiceRate=p.voiceRate; if(p.showHint!==undefined)S.showHint=p.showHint;
+}catch(e){}
+function saveSettings(){try{localStorage.setItem('danceFrame.settings',JSON.stringify({voiceOn:S.voiceOn,voiceRate:S.voiceRate,showHint:S.showHint}));}catch(e){}}
+
+/* ===================== IndexedDB ===================== */
+function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open('danceFrame',1);
+  r.onupgradeneeded=()=>{r.result.createObjectStore('projects',{keyPath:'id'});};
+  r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+async function dbAll(){const db=await openDB();return new Promise((res,rej)=>{const q=db.transaction('projects','readonly').objectStore('projects').getAll();q.onsuccess=()=>res(q.result||[]);q.onerror=()=>rej(q.error);});}
+async function dbGet(id){const db=await openDB();return new Promise((res,rej)=>{const q=db.transaction('projects','readonly').objectStore('projects').get(id);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);});}
+async function dbPut(p){const db=await openDB();return new Promise((res,rej)=>{const t=db.transaction('projects','readwrite');t.objectStore('projects').put(p);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);});}
+async function dbDel(id){const db=await openDB();return new Promise((res,rej)=>{const t=db.transaction('projects','readwrite');t.objectStore('projects').delete(id);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);});}
+let saveTimer=null;
+function saveProject(){if(!S.project)return;S.project.updatedAt=Date.now();clearTimeout(saveTimer);saveTimer=setTimeout(()=>{dbPut(S.project).catch(()=>toast('保存失败：存储空间可能不足'));},400);}
+
+/* ===================== 语音教导 ===================== */
+const synth=window.speechSynthesis||null;
+let zhVoice=null;
+function pickVoice(){if(!synth)return;const vs=synth.getVoices();
+  zhVoice=vs.find(v=>/^zh/i.test(v.lang)&&/xiaoxiao|yunyang|tingting|yaoyao|huihui|female|女/i.test(v.name))
+        ||vs.find(v=>/^zh/i.test(v.lang))||null;}
+if(synth){pickVoice();synth.onvoiceschanged=pickVoice;}
+/* iOS 要求首次朗读发生在用户点击之后，提前静音解锁一次 */
+let voiceUnlocked=false;
+window.addEventListener('pointerdown',()=>{
+  if(voiceUnlocked||!S.voiceOn||!synth)return;
+  try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;synth.speak(u);}catch(e){}
+  voiceUnlocked=true;
+});
+function speak(text,onend){
+  if(!synth||!S.voiceOn||!text){if(onend)onend();return;}
+  try{synth.cancel();const u=new SpeechSynthesisUtterance(text);
+    u.lang='zh-CN';if(zhVoice)u.voice=zhVoice;u.rate=S.voiceRate;
+    if(onend)u.onend=onend;synth.speak(u);}catch(e){if(onend)onend();}
+}
+function waitSpeechOrTimeout(ms){return new Promise(res=>{if(!synth||!S.voiceOn||!synth.speaking){setTimeout(res,300);return;}
+  let done=false;const fin=()=>{if(!done){done=true;res();}};
+  const iv=setInterval(()=>{if(!synth.speaking){clearInterval(iv);fin();}},100);
+  setTimeout(()=>{clearInterval(iv);fin();},ms);});}
+
+/* ===================== 视频核心 ===================== */
+function applySpeed(v){S.speed=clamp(v,0.1,1);
+  try{video.playbackRate=S.speed;video.preservesPitch=true;}catch(e){}
+  try{video.webkitPreservesPitch=true;}catch(e){}
+  $('speedLabel').textContent=S.speed.toFixed(2).replace(/0$/,'')+'×';
+  $('speedSlider').value=Math.round(S.speed*100);
+  document.querySelectorAll('.speedRow .presets button').forEach(b=>b.classList.toggle('on',Math.abs(parseFloat(b.dataset.s)-S.speed)<0.001));
+}
+function applyMirror(m){S.mirror=m;video.classList.toggle('mirror',m);
+  $('btnMirrorT').classList.toggle('on',m);$('setMirror').checked=m;
+  if(S.project){S.project.mirror=m;saveProject();}}
+function applyVoice(v){S.voiceOn=v;$('btnVoiceT').classList.toggle('on',v);$('setVoice').checked=v;
+  if(!v&&synth)try{synth.cancel();}catch(e){} saveSettings();}
+
+/* 帧率检测：收集相邻呈现帧的 mediaTime 差（播放与逐帧步进都算），取中位数 */
+let lastMediaTime=null;
+function noteFrame(mt){
+  if(mt==null)return;
+  if(lastMediaTime!=null&&!S.fpsDetected){
+    const dt=mt-lastMediaTime;
+    if(dt>0.001&&dt<0.5){
+      S.fpsSamples.push(dt);
+      if(S.fpsSamples.length>=6)computeFps();
+    }
+  }
+  lastMediaTime=mt;
+}
+function computeFps(){
+  const d=[...S.fpsSamples].sort((a,b)=>a-b);
+  const med=d[Math.floor(d.length/2)];
+  const f=Math.round(1/med);
+  if(f>=8&&f<=120){
+    S.fps=f;S.fpsDetected=true;S.fpsSamples=[];
+    if(S.project&&S.project.fps!==f){S.project.fps=f;saveProject();}
+    $('fpsLabel').textContent=f+' 帧/秒';$('setFps').value=f;
+  }else{S.fpsSamples=[];}
+}
+function onFrame(now,meta){
+  if(meta)noteFrame(meta.mediaTime);
+  if(S.ab.a!=null&&S.ab.b!=null&&S.ab.b>S.ab.a&&!video.paused&&video.currentTime>=S.ab.b-0.02){video.currentTime=S.ab.a;}
+  updateTimeUI();
+  if(!video.paused&&video.requestVideoFrameCallback)video.requestVideoFrameCallback(onFrame);
+}
+function segIndexAt(t){const k=S.project?S.project.keyframes:[];let idx=-1;
+  for(let i=0;i<k.length;i++){if(t>=k[i].time-0.001)idx=i;else break;}return idx;}
+function updateSubtitle(){
+  const el=$('subtitle');if(!S.project||!S.project.keyframes.length){el.classList.remove('show');return;}
+  const seg=segIndexAt(video.currentTime);
+  if(seg<0){el.classList.remove('show');return;}
+  const kf=S.project.keyframes[seg];
+  el.querySelector('.num').textContent='第'+(seg+1)+'拍';
+  if(kf.note&&kf.note.trim()){el.querySelector('.txt').textContent=kf.note.trim();el.querySelector('.txt').classList.remove('empty-note');}
+      else{el.querySelector('.txt').textContent='还没有口令，点「✏️ 编辑口令」写一句';el.querySelector('.txt').classList.add('empty-note');}
+  el.classList.add('show');
+}
+function segmentCheck(){
+  const seg=segIndexAt(video.currentTime);
+  if(seg!==S.lastSeg){
+    S.lastSeg=seg;updateSubtitle();highlightCard(seg);
+    if(S.voiceOn&&!S.follow.active&&!S.scrubbing&&seg>=0){
+      const n=S.project.keyframes[seg].note;
+      if(n&&n.trim())speak(n.trim());
+    }
+  }
+}
+function updateTimeUI(){
+  const d=video.duration||0,t=video.currentTime||0;
+  $('timeLabel').textContent=fmt(t)+' / '+fmt(d);
+  if(!S.scrubbing){$('seek').value=d?(t/d*1000):0;}
+  $('fill').style.width=d?(t/d*100)+'%':'0%';
+  segmentCheck();
+}
+video.addEventListener('play',()=>{$('btnPlay').textContent='⏸';
+  if(video.requestVideoFrameCallback)video.requestVideoFrameCallback(onFrame);});
+video.addEventListener('pause',()=>{$('btnPlay').textContent='▶';updateTimeUI();});
+video.addEventListener('timeupdate',()=>{
+  if(S.ab.a!=null&&S.ab.b!=null&&S.ab.b>S.ab.a&&!video.paused&&video.currentTime>=S.ab.b-0.02){video.currentTime=S.ab.a;}
+  updateTimeUI();
+});
+video.addEventListener('seeked',()=>{updateTimeUI();});
+video.addEventListener('loadedmetadata',()=>{
+  $('fpsLabel').textContent=S.fpsDetected?S.fps+' 帧/秒':'帧率待检测';
+  updateTimeUI();
+});
+
+/* 逐帧步进 */
+function stepFrame(dir){
+  if(!S.project)return;
+  if(S.follow.active){stopFollow();return;}
+  if(!video.paused)video.pause();
+  const dt=1/S.fps;
+  if(dir>0&&video.requestVideoFrameCallback){
+    /* 先注册回调再播放：新帧一呈现立即暂停，保证只前进一帧 */
+    let done=false;
+    video.requestVideoFrameCallback((now,meta)=>{
+      done=true;video.pause();
+      if(meta&&meta.mediaTime!=null){
+        noteFrame(meta.mediaTime);
+        if(Math.abs(video.currentTime-meta.mediaTime)>0.0005){try{video.currentTime=meta.mediaTime;}catch(e){}}
+      }
+    });
+    video.play().catch(()=>{});
+    /* 兜底：rVFC 迟迟不触发（页面被遮挡等极端情况）时，暂停并按帧长前进 */
+    setTimeout(()=>{
+      if(done)return;
+      if(!video.paused)video.pause();
+      video.currentTime=clamp(video.currentTime+dt,0,Math.max(0,(video.duration||0)-0.001));
+    },150);
+  }else{
+    const target=dir>0?video.currentTime+dt+0.0005:video.currentTime-dt-0.002;
+    video.currentTime=clamp(target,0,Math.max(0,(video.duration||0)-0.001));
+  }
+}
+$('btnPrev').onclick=()=>stepFrame(-1);
+$('btnNext').onclick=()=>stepFrame(1);
+$('btnPlay').onclick=()=>{if(S.follow.active){stopFollow();return;}video.paused?video.play():video.pause();};
+
+/* 舞台点击分区：左=上一帧 中=播放 右=下一帧 */
+$('stage').addEventListener('click',e=>{
+  if(e.target.closest('#dropzone')||e.target.closest('#followOverlay'))return;
+  if(!S.project)return;
+  const r=$('stage').getBoundingClientRect();const x=e.clientX-r.left;
+  if(video.paused){if(x<r.width*0.33)stepFrame(-1);else if(x>r.width*0.67)stepFrame(1);else video.play();}
+  else video.pause();
+});
+
+/* ===================== 时间轴 / A-B ===================== */
+const seekEl=$('seek');
+seekEl.addEventListener('pointerdown',()=>{S.scrubbing=true;});
+seekEl.addEventListener('pointerup',()=>{S.scrubbing=false;});
+seekEl.addEventListener('input',()=>{
+  if(!S.project||!video.duration)return;
+  video.currentTime=parseFloat(seekEl.value)/1000*video.duration;
+});
+function renderMarks(){
+  const box=$('kfMarks');box.innerHTML='';
+  if(!S.project||!video.duration)return;
+  for(const kf of S.project.keyframes){
+    const m=document.createElement('div');m.className='kfmark';m.style.left=(kf.time/video.duration*100)+'%';box.appendChild(m);
+  }
+  renderAB();
+}
+function renderAB(){
+  const box=$('abBox'),btn=$('btnClearAB');
+  if(S.ab.a!=null&&S.ab.b!=null&&S.ab.b>S.ab.a){
+    box.style.display='block';box.style.left=(S.ab.a/video.duration*100)+'%';
+    box.style.width=((S.ab.b-S.ab.a)/video.duration*100)+'%';btn.style.display='';
+  }else{box.style.display='none';btn.style.display='none';}
+}
+$('btnSetA').onclick=()=>{S.ab.a=video.currentTime;toast('已设 A 点');renderAB();};
+$('btnSetB').onclick=()=>{S.ab.b=video.currentTime;
+  if(S.ab.a!=null&&S.ab.b!=null&&S.ab.b<=S.ab.a){const t=S.ab.a;S.ab.a=S.ab.b;S.ab.b=t;}
+  toast('已设 B 点，播放到 B 自动回 A');renderAB();};
+$('btnClearAB').onclick=()=>{S.ab.a=S.ab.b=null;renderAB();};
+
+/* ===================== 关键帧 ===================== */
+function capture(){
+  if(!S.project||!video.videoWidth){toast('请先导入视频');return;}
+  if(S.follow.active){stopFollow();}
+  if(!video.paused)video.pause();
+  const vw=video.videoWidth,vh=video.videoHeight;
+  const w=Math.min(720,vw),h=Math.max(1,Math.round(w*vh/vw));
+  const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');
+  if(S.mirror){g.translate(w,0);g.scale(-1,1);}
+  g.drawImage(video,0,0,w,h);
+  const tw=144,th=Math.max(1,Math.round(tw*vh/vw));
+  const c2=document.createElement('canvas');c2.width=tw;c2.height=th;const g2=c2.getContext('2d');
+  if(S.mirror){g2.translate(tw,0);g2.scale(-1,1);}
+  g2.drawImage(video,0,0,tw,th);
+  const kf={id:uid(),time:video.currentTime,note:'',full:c.toDataURL('image/jpeg',0.85),thumb:c2.toDataURL('image/jpeg',0.7)};
+  const kfs=S.project.keyframes;kfs.push(kf);kfs.sort((a,b)=>a.time-b.time);
+  renderStrip();renderMarks();saveProject();
+  toast('已捕获第 '+(kfs.indexOf(kf)+1)+' 拍，写一句口令吧');
+  openKfEditor(kf);
+}
+$('btnCapture').onclick=capture;
+function renderStrip(){
+  const strip=$('kfStrip');strip.innerHTML='';
+  const kfs=S.project?S.project.keyframes:[];
+  $('kfCount').textContent='关键帧 '+kfs.length;
+  if(!kfs.length){strip.innerHTML='<div class="emptyTip">暂停在想要记住的画面，点「📸 拆解此帧」把它变成一拍，再写上口令，语音就会教你。</div>';return;}
+  kfs.forEach((kf,i)=>{
+    const card=document.createElement('div');card.className='kfCard';card.dataset.id=kf.id;
+    card.innerHTML='<img alt="第'+(i+1)+'拍"><div class="lab"><b>第'+(i+1)+'拍</b> '+fmt(kf.time)+'</div>';
+    card.querySelector('img').src=kf.thumb;
+    card.onclick=()=>{video.currentTime=kf.time;};
+    strip.appendChild(card);
+  });
+}
+function highlightCard(seg){
+  const kfs=S.project?S.project.keyframes:[];
+  document.querySelectorAll('#kfStrip .kfCard').forEach((c,i)=>{
+    c.classList.toggle('active',i===seg);
+    if(i===seg&&c.scrollIntoView)c.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});
+  });
+  void kfs;
+}
+function openKfEditor(kf){
+  S.editKf=kf;
+  const idx=S.project.keyframes.indexOf(kf);
+  $('kfEditImg').src=kf.full;
+  $('kfEditTime').textContent='第 '+(idx+1)+' 拍 · 时间点 '+fmt(kf.time);
+  $('kfEditNote').value=kf.note||'';
+  $('ovKf').classList.add('show');
+}
+$('btnKfSave').onclick=()=>{if(S.editKf){S.editKf.note=$('kfEditNote').value;saveProject();updateSubtitle();}
+  $('ovKf').classList.remove('show');toast('已保存口令');};
+$('btnKfGoto').onclick=()=>{if(S.editKf){video.currentTime=S.editKf.time;$('ovKf').classList.remove('show');}};
+$('btnKfDownload').onclick=()=>{if(!S.editKf)return;const idx=S.project.keyframes.indexOf(S.editKf);
+  const a=document.createElement('a');a.href=S.editKf.full;a.download='舞帧_第'+(idx+1)+'拍.jpg';a.click();};
+$('btnKfDelete').onclick=()=>{if(!S.editKf)return;
+  if(!confirm('确定删除这一拍吗？'))return;
+  const i=S.project.keyframes.indexOf(S.editKf);
+  S.project.keyframes.splice(i,1);S.editKf=null;
+  $('ovKf').classList.remove('show');renderStrip();renderMarks();updateSubtitle();saveProject();toast('已删除');};
+$('btnEditNear').onclick=()=>{
+  if(!S.project)return;
+  const t=video.currentTime;let best=null,bd=0.6;
+  for(const kf of S.project.keyframes){const d=Math.abs(kf.time-t);if(d<bd){bd=d;best=kf;}}
+  if(best)openKfEditor(best);else toast('附近没有关键帧，先点「📸 拆解此帧」');
+};
+
+/* ===================== 领练模式 ===================== */
+async function seekTo(t){return new Promise(res=>{
+  const done=()=>{video.removeEventListener('seeked',done);res();};
+  video.addEventListener('seeked',done);video.currentTime=t;setTimeout(done,1200);});}
+function playUntil(end){return new Promise(res=>{
+  applySpeed(S.speed);
+  let finished=false;
+  const fin=()=>{if(finished)return;finished=true;clearInterval(iv);video.pause();res();};
+  const check=()=>{
+    if(S.follow.stop||!S.follow.active||video.currentTime>=end-0.02||video.ended)fin();
+  };
+  /* rAF + 定时器双保险：页面被遮挡导致 rAF 节流时仍能收尾 */
+  const iv=setInterval(check,100);
+  video.play().then(()=>requestAnimationFrame(check)).catch(fin);
+});}
+async function startFollow(){
+  const kfs=S.project&&S.project.keyframes;
+  if(!kfs||!kfs.length){toast('请先捕获至少一个关键帧');return;}
+  S.follow={active:true,stop:false};
+  $('followOverlay').classList.add('show');
+  try{S.wakeLock=await navigator.wakeLock.request('screen');}catch(e){}
+  video.pause();
+  const d=video.duration;
+  for(let i=0;i<kfs.length;i++){
+    if(S.follow.stop)break;
+    $('followStep').textContent='第 '+(i+1)+' 拍 / 共 '+kfs.length+' 拍';
+    await seekTo(kfs[i].time);highlightCard(i);
+    const note=(kfs[i].note||'').trim();
+    if(S.voiceOn&&note){speak('第'+(i+1)+'拍，'+note);await waitSpeechOrTimeout(6000);}
+    else{await sleep(600);}
+    if(S.follow.stop)break;
+    const end=(i+1<kfs.length)?kfs[i+1].time:Math.min(d||1e9,kfs[i].time+4);
+    await playUntil(end);
+    if(S.follow.stop)break;
+    await sleep(500);
+  }
+  $('followStep').textContent='领练结束，跟着音乐来一遍吧！';
+  await sleep(900);
+  S.follow.active=false;$('followOverlay').classList.remove('show');
+  try{if(S.wakeLock){S.wakeLock.release();S.wakeLock=null;}}catch(e){}
+}
+function stopFollow(){S.follow.stop=true;video.pause();}
+$('btnFollow').onclick=startFollow;
+$('btnStopFollow').onclick=stopFollow;
+
+/* ===================== 项目管理 ===================== */
+async function importFile(file){
+  if(!file)return;
+  const okType=(file.type&&file.type.startsWith('video/'))||/\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(file.name);
+  if(!okType){toast('请选择视频文件');return;}
+  toast('正在导入…');
+  const p={id:uid(),name:file.name.replace(/\.[^.]+$/,''),videoName:file.name,videoBlob:file,
+    fps:null,mirror:false,createdAt:Date.now(),updatedAt:Date.now(),keyframes:[]};
+  try{await dbPut(p);}catch(e){toast('保存失败：视频可能过大');return;}
+  await openProject(p);
+}
+async function openProject(p){
+  stopFollow();
+  if(S.url)URL.revokeObjectURL(S.url);
+  S.project=p;S.url=URL.createObjectURL(p.videoBlob);
+  S.fps=p.fps||30;S.fpsDetected=!!p.fps;
+  S.ab={a:null,b:null};S.lastSeg=-2;
+  video.src=S.url;applySpeed(S.speed);applyMirror(!!p.mirror);
+  $('projName').textContent=p.name;
+  $('dropzone').classList.add('hide');
+  renderStrip();renderMarks();updateSubtitle();updateTimeUI();
+  $('setFps').value=S.fps;
+}
+async function renderProjectList(){
+  const list=await dbAll();list.sort((a,b)=>b.updatedAt-a.updatedAt);
+  const box=$('projList');box.innerHTML='';
+  if(!list.length){box.innerHTML='<div style="color:var(--muted);font-size:13px">还没有项目，导入一个视频开始吧。</div>';return;}
+  for(const p of list){
+    const item=document.createElement('div');item.className='projItem';
+    item.innerHTML='<div class="info"><div class="n"></div><div class="m"></div></div>';
+    item.querySelector('.n').textContent=p.name;
+    item.querySelector('.m').textContent=new Date(p.updatedAt).toLocaleString('zh-CN')+' · '+p.keyframes.length+' 拍';
+    const bOpen=document.createElement('button');bOpen.className='btn small primary';bOpen.textContent='打开';
+    bOpen.onclick=async()=>{$('ovProjects').classList.remove('show');const full=await dbGet(p.id);if(full)openProject(full);};
+    const bDel=document.createElement('button');bDel.className='btn small danger';bDel.textContent='删除';
+    bDel.onclick=async()=>{if(!confirm('删除项目「'+p.name+'」及其所有关键帧？'))return;
+      await dbDel(p.id);
+      if(S.project&&S.project.id===p.id){S.project=null;if(S.url)URL.revokeObjectURL(S.url);video.removeAttribute('src');video.load();$('dropzone').classList.remove('hide');$('projName').textContent='舞帧 · 舞蹈慢动作拆解';}
+      renderProjectList();refreshOpenLast();};
+    item.appendChild(bOpen);item.appendChild(bDel);box.appendChild(item);
+  }
+}
+async function refreshOpenLast(){
+  const list=await dbAll();
+  $('btnOpenLast').style.display=list.length?'':'none';
+}
+
+/* ===================== 弹层 / 设置 ===================== */
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).classList.remove('show'));
+document.querySelectorAll('.overlay').forEach(ov=>ov.addEventListener('click',e=>{if(e.target===ov&&ov.id!=='ovKf')ov.classList.remove('show');}));
+$('btnProjects').onclick=()=>{renderProjectList();$('ovProjects').classList.add('show');};
+$('btnSettings').onclick=async()=>{
+  $('setVoice').checked=S.voiceOn;$('setVoiceRate').value=String(S.voiceRate);
+  $('setMirror').checked=S.mirror;$('setFps').value=S.fps;$('setHint').checked=S.showHint;
+  try{if(navigator.storage&&navigator.storage.estimate){const e=await navigator.storage.estimate();
+    $('storageInfo').textContent='本应用已用存储：'+(e.usage/1048576).toFixed(1)+' MB';}}catch(e){}
+  $('ovSettings').classList.add('show');
+};
+$('setVoice').onchange=e=>applyVoice(e.target.checked);
+$('setVoiceRate').onchange=e=>{S.voiceRate=parseFloat(e.target.value);saveSettings();};
+$('setMirror').onchange=e=>applyMirror(e.target.checked);
+$('setHint').onchange=e=>{S.showHint=e.target.checked;$('tapHint').style.display=S.showHint?'':'none';saveSettings();};
+$('setFps').onchange=e=>{const f=clamp(parseInt(e.target.value)||30,5,120);S.fps=f;S.fpsDetected=true;e.target.value=f;
+  $('fpsLabel').textContent=f+' 帧/秒';if(S.project){S.project.fps=f;saveProject();}};
+$('btnMirrorT').onclick=()=>applyMirror(!S.mirror);
+$('btnVoiceT').onclick=()=>{applyVoice(!S.voiceOn);toast(S.voiceOn?'语音教导已开启':'语音教导已关闭');};
+
+/* 导入入口 */
+$('btnImport').onclick=()=>$('fileInput').click();
+$('btnImport2').onclick=()=>$('fileInput').click();
+$('btnOpenLast').onclick=async()=>{const list=await dbAll();list.sort((a,b)=>b.updatedAt-a.updatedAt);
+  if(list.length){const full=await dbGet(list[0].id);if(full)openProject(full);}};
+$('fileInput').onchange=e=>{const f=e.target.files[0];e.target.value='';importFile(f);};
+/* 桌面拖拽导入 */
+window.addEventListener('dragover',e=>e.preventDefault());
+window.addEventListener('drop',e=>{e.preventDefault();const f=e.dataTransfer.files&&e.dataTransfer.files[0];if(f)importFile(f);});
+
+/* 速度控制 */
+document.querySelectorAll('.speedRow .presets button').forEach(b=>b.onclick=()=>applySpeed(parseFloat(b.dataset.s)));
+$('speedSlider').oninput=e=>applySpeed(parseInt(e.target.value)/100);
+
+/* 键盘快捷键（电脑端调试用） */
+window.addEventListener('keydown',e=>{
+  if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;
+  if(!S.project)return;
+  if(e.code==='Space'){e.preventDefault();video.paused?video.play():video.pause();}
+  else if(e.key==='ArrowLeft'){e.preventDefault();e.shiftKey?video.currentTime=Math.max(0,video.currentTime-1):stepFrame(-1);}
+  else if(e.key==='ArrowRight'){e.preventDefault();e.shiftKey?video.currentTime=Math.min(video.duration,video.currentTime+1):stepFrame(1);}
+  else if(e.key==='ArrowUp'){e.preventDefault();applySpeed(clamp(S.speed+0.05,0.1,1));}
+  else if(e.key==='ArrowDown'){e.preventDefault();applySpeed(clamp(S.speed-0.05,0.1,1));}
+  else if(e.key==='m'||e.key==='M')applyMirror(!S.mirror);
+  else if(e.key==='c'||e.key==='C')capture();
+});
+
+/* 提示自动隐藏 */
+setTimeout(()=>{$('tapHint').style.opacity='0';},7000);
+
+/* Service Worker（仅在 https / localhost 注册） */
+if('serviceWorker' in navigator&&(location.protocol==='https:'||['localhost','127.0.0.1'].includes(location.hostname))){
+  try{navigator.serviceWorker.register('sw.js');}catch(e){}
+}
+
+/* 启动 */
+applySpeed(0.5);applyVoice(S.voiceOn);applyMirror(false);
+$('tapHint').style.display=S.showHint?'':'none';
+refreshOpenLast();
+window.addEventListener('beforeunload',()=>{saveProject();if(synth)try{synth.cancel();}catch(e){}});
+</script>
+</body>
+</html>
