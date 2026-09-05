@@ -167,6 +167,16 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
 .ck{width:22px;height:22px;accent-color:#ff4d8d}
 .pbar{height:8px;border-radius:4px;background:var(--panel2);overflow:hidden;flex:1}
 #aiProgressBar{height:100%;width:0;background:var(--grad);transition:width .2s}
+#cmpPanel{
+  position:absolute;right:8px;bottom:8px;z-index:4;width:150px;padding:8px;border-radius:12px;
+  background:rgba(10,11,18,.88);backdrop-filter:blur(8px);display:none;flex-direction:column;gap:6px;border:1px solid var(--line);
+}
+#cmpPanel.show{display:flex}
+.cmpStack{position:relative;width:100%;height:170px;border-radius:8px;overflow:hidden;background:#000}
+#camVideo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+#camCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#cmpInfo{font-size:11px;color:var(--text);line-height:1.5;min-height:30px}
+#track .bt{position:absolute;top:9px;width:1px;height:12px;background:rgba(154,160,180,.4)}
 /* ── 弹层 ── */
 .overlay{
   position:fixed;inset:0;background:rgba(5,6,10,.66);backdrop-filter:blur(3px);
@@ -228,6 +238,18 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
       <div class="big">🎙 领练模式进行中</div>
       <div class="step" id="followStep">准备中…</div>
       <button id="btnStopFollow">■ 停止领练</button>
+    </div>
+    <div id="cmpPanel">
+      <div class="cmpStack">
+        <video id="camVideo" autoplay muted playsinline></video>
+        <canvas id="camCanvas"></canvas>
+      </div>
+      <div id="cmpInfo">对准镜头，让全身入镜</div>
+      <div class="row" style="gap:6px">
+        <button class="btn small primary" id="btnCmpStart">● 开始对比</button>
+        <button class="btn small" id="btnCmpStop">■ 结束</button>
+        <button class="btn small" id="btnCmpClose">✕</button>
+      </div>
     </div>
     <div id="dropzone">
       <div class="logo">舞</div>
@@ -338,6 +360,16 @@ header .title{flex:1;font-weight:700;font-size:16px;white-space:nowrap;overflow:
     <div class="row"><label>〰️ 运动轨迹（手脚 2 秒残影）</label><input type="checkbox" class="ck" id="aiTogTrail"></div>
     <div class="row"><label>👻 上一帧残影（洋葱皮）</label><input type="checkbox" class="ck" id="aiTogGhost"></div>
     <div class="row"><label>⚖️ 左右对称提示</label><input type="checkbox" class="ck" id="aiTogSymmetry"></div>
+    <hr>
+    <div class="grid2">
+      <button class="btn" id="btnBeat">🎵 分析音乐节拍</button>
+      <button class="btn" id="btnSnapBeat">🎯 关键帧对齐节拍</button>
+    </div>
+    <div class="grid2">
+      <button class="btn" id="btnExportSheet">📤 导出教学长图</button>
+      <button class="btn" id="btnCmpOpen">🤸 跟练对比打分</button>
+    </div>
+    <div id="beatInfo" style="color:var(--muted);font-size:12px"></div>
     <div class="row" style="color:var(--muted);font-size:12px">AI 全部运行在手机本地，视频不会上传。分析一次后，播放和逐帧都会自动叠加显示。首次使用需下载模型（约 12MB，一次性），之后离线可用。</div>
   </div>
 </div>
@@ -556,10 +588,29 @@ function stepFrame(dir){
        只有 mediaTime 超过当前时间半个帧长才算真正前进了一帧 */
     let done=false;
     const startCt=video.currentTime;
+    const target=clamp(startCt+dt+0.002,0,Math.max(0,(video.duration||0)-0.001));
+    const finishTo=t=>{video.pause();video.currentTime=t;};
+    const cleanup=()=>{video.removeEventListener('timeupdate',onTU);clearTimeout(to);};
+    const onTU=()=>{
+      if(done)return;
+      if(S.scrubbing||video.currentTime<startCt-0.002||video.currentTime>startCt+2*dt){done=true;cleanup();return;}
+      if(video.currentTime>=startCt+dt*0.5){
+        done=true;cleanup();
+        /* timeupdate 位置受播放漂移影响，统一回到帧网格上的下一帧 */
+        finishTo(target);
+      }
+    };
+    const to=setTimeout(()=>{
+      if(done||S.scrubbing)return;
+      done=true;cleanup();
+      if(video.currentTime>=startCt-0.002&&video.currentTime<startCt+dt*0.5)finishTo(target);
+      else if(!video.paused)video.pause();
+    },600);
     const tryFrame=(now,meta)=>{
       if(done)return;
+      if(video.currentTime<startCt-0.002||video.currentTime>startCt+2*dt){done=true;cleanup();return;}
       if(meta&&meta.mediaTime>startCt+dt*0.5){
-        done=true;video.pause();
+        done=true;cleanup();video.pause();
         noteFrame(meta.mediaTime);
         if(Math.abs(video.currentTime-meta.mediaTime)>0.0005){try{video.currentTime=meta.mediaTime;}catch(e){}}
       }else if(!video.paused){
@@ -567,21 +618,19 @@ function stepFrame(dir){
       }
     };
     video.requestVideoFrameCallback(tryFrame);
-    video.play().catch(()=>{});
-    /* 兜底：rVFC 不触发（页面被遮挡等）时也要保证前进一步。
-       仅当位置仍停在起点（该步从未完成、且无后续操作改写位置）时才执行，
-       避免迟到的定时器污染之后的步进/拖动 */
-    setTimeout(()=>{
-      if(done)return;
-      done=true;
-      if(!video.paused)video.pause();
-      if(video.currentTime>=startCt-0.002&&video.currentTime<startCt+dt*0.5){
-        video.currentTime=clamp(startCt+dt+0.002,0,Math.max(0,(video.duration||0)-0.001));
-      }
-    },250);
+    video.play().catch(()=>{cleanup();});
+    video.addEventListener('timeupdate',onTU);
   }else{
     /* 前进：+一帧再加一点越过帧边界；后退：-一帧再留一点落在上一帧内 */
     const target=dir>0?video.currentTime+dt+0.002:video.currentTime-dt+0.001;
+    if(dir<0&&video.requestVideoFrameCallback){
+      /* 后退落帧后吸附到真实帧时间，保证连续后退每步都是整帧 */
+      video.requestVideoFrameCallback((now,meta)=>{
+        if(meta&&meta.mediaTime>0&&Math.abs(video.currentTime-meta.mediaTime)>0.0005){
+          try{video.currentTime=meta.mediaTime;}catch(e){}
+        }
+      });
+    }
     video.currentTime=clamp(target,0,Math.max(0,(video.duration||0)-0.001));
   }
 }
@@ -612,6 +661,7 @@ function renderMarks(){
   for(const kf of S.project.keyframes){
     const m=document.createElement('div');m.className='kfmark';m.style.left=(kf.time/video.duration*100)+'%';box.appendChild(m);
   }
+  renderBeatTicks();
   renderAB();
 }
 function renderAB(){
@@ -866,7 +916,7 @@ const AI={pose:null,loading:null,busy:false,cancel:false,last:null,_cplx:null,
     (()=>{try{return JSON.parse(localStorage.getItem('danceFrame.ai')||'{}')}catch(e){return{}}})())};
 function saveAiFlags(){try{localStorage.setItem('danceFrame.ai',JSON.stringify(AI.flags))}catch(e){}}
 const POSE_CONN=[[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32]];
-const ANGLE_DEFS=[['肘',11,13,15],['肘',12,14,16],['肩',13,11,23],['肩',14,12,24],['膝',23,25,27],['膝',24,26,28]];
+const ANGLE_DEFS=[['左肘',11,13,15],['右肘',12,14,16],['左肩',13,11,23],['右肩',14,12,24],['左膝',23,25,27],['右膝',24,26,28]];
 const TRAIL_KPS=[[15,'#34d399'],[16,'#ff6b81'],[27,'#60a5fa'],[28,'#fbbf24']];
 
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('脚本加载失败：'+src));document.head.appendChild(s);});}
@@ -909,6 +959,11 @@ function renderAI(){
   $('aiTogTrail').checked=!!AI.flags.trail;
   $('aiTogGhost').checked=!!AI.flags.ghost;
   $('aiTogSymmetry').checked=!!AI.flags.symmetry;
+  $('btnBeat').disabled=AI.busy||!S.project;
+  $('btnSnapBeat').disabled=AI.busy||!S.project||!(S.project&&S.project.beat);
+  $('btnExportSheet').disabled=AI.busy||!S.project||!(S.project&&S.project.keyframes.length);
+  $('btnCmpOpen').disabled=AI.busy||!S.project||!(S.project&&S.project.pose);
+  $('beatInfo').textContent=(S.project&&S.project.beat)?('当前音乐节拍：'+S.project.beat.bpm+' BPM（时间轴上已显示节拍刻度）'):'';
 }
 async function aiAnalyze(){
   if(AI.busy||!S.project)return;
@@ -1122,6 +1177,274 @@ $('btnAIAutoKf').onclick=()=>aiAutoKeyframes(parseInt($('aiKfCount').value)||8);
 for(const[id,key]of[['aiTogSkeleton','skeleton'],['aiTogAngles','angles'],['aiTogTrail','trail'],['aiTogGhost','ghost'],['aiTogSymmetry','symmetry']])
   $(id).onchange=e=>{AI.flags[key]=e.target.checked;saveAiFlags();drawPose();};
 window.addEventListener('resize',()=>{try{drawPose();}catch(e){}});
+
+/* ===================== 第三档：教学长图 / 音乐节拍 / 跟练对比 ===================== */
+function wrapText(g,text,maxW){
+  const lines=[];let cur='';
+  for(const ch of(text||'')){
+    if(ch==='\n'){lines.push(cur);cur='';continue;}
+    if(g.measureText(cur+ch).width>maxW){lines.push(cur);cur=ch;}
+    else cur+=ch;
+  }
+  if(cur||!lines.length)lines.push(cur);
+  return lines;
+}
+async function exportTeachSheet(){
+  const kfs=S.project&&S.project.keyframes;
+  if(!kfs||!kfs.length){toast('还没有关键帧');return;}
+  toast('正在生成长图…');
+  const W=720,pad=24;
+  const name=S.project.name||'舞帧';
+  const loadImg=src=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src;});
+  const meas=document.createElement('canvas').getContext('2d');
+  const items=[];
+  for(const kf of kfs){
+    const img=await loadImg(kf.full).catch(()=>null);
+    const h=img?Math.round(W*img.height/img.width):Math.round(W*0.5625);
+    meas.font='24px system-ui';
+    const lines=wrapText(meas,(kf.note||'').trim(),W-pad*2);
+    items.push({kf,img,h,lines});
+  }
+  let y=pad+110;
+  for(const it of items){
+    y+=46+it.h+14+(it.lines.length?it.lines.length*34+8:0)+36;
+  }
+  const H=y+pad;
+  const c=document.createElement('canvas');c.width=W;c.height=Math.max(400,H);
+  const g=c.getContext('2d');
+  g.fillStyle='#101218';g.fillRect(0,0,W,c.height);
+  g.textAlign='left';
+  g.fillStyle='#fff';g.font='bold 40px system-ui';
+  g.fillText('舞帧 · '+name,pad,pad+40);
+  g.fillStyle='#9aa0b4';g.font='22px system-ui';
+  g.fillText(kfs.length+' 拍 · 舞蹈慢动作拆解口令表',pad,pad+74);
+  y=pad+110;
+  for(let i2=0;i2<items.length;i2++){
+    const it=items[i2];
+    g.font='bold 28px system-ui';g.fillStyle='#ff4d8d';
+    g.fillText('第'+(i2+1)+'拍  '+fmt(it.kf.time)+(it.kf.mastered?'  ✓ 已掌握':''),pad,y+30);
+    y+=46;
+    if(it.img)g.drawImage(it.img,pad,y,W,it.h);
+    else{g.fillStyle='#1d2030';g.fillRect(pad,y,W,it.h);}
+    y+=it.h+14;
+    if(it.lines.length){
+      g.font='24px system-ui';g.fillStyle='#eef0f6';
+      for(const ln of it.lines){y+=34;g.fillText(ln,pad,y);}
+      y+=8;
+    }
+    y+=18;
+    g.strokeStyle='#2a2e42';g.beginPath();g.moveTo(pad,y);g.lineTo(W-pad,y);g.stroke();
+    y+=18;
+  }
+  const blob=await new Promise(res=>c.toBlob(res,'image/jpeg',0.9));
+  if(!blob){toast('生成失败');return;}
+  const file=new File([blob],name+'_舞帧教学图.jpg',{type:'image/jpeg'});
+  try{
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:name+' · 舞帧教学图'});
+      return;
+    }
+  }catch(e){if(e&&e.name==='AbortError')return;}
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=file.name;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),8000);
+  toast('教学长图已生成'+(navigator.canShare?'':'，已开始下载'));
+}
+/* —— 音乐节拍 —— */
+async function analyzeBeat(){
+  if(AI.busy||!S.project)return;
+  if(S.follow.active)stopFollow();
+  AI.busy=true;renderAI();
+  const prog=(p,txt)=>{$('aiProgressBar').style.width=Math.round(p*100)+'%';$('aiProgText').textContent=txt||'';};
+  try{
+    prog(0.1,'解码音频…');
+    $('aiProgWrap').style.display='flex';$('aiProgText').style.display='block';
+    const buf=await (await fetch(S.url)).arrayBuffer();
+    const ac=new (window.AudioContext||window.webkitAudioContext)();
+    const audio=await ac.decodeAudioData(buf);
+    const sr=audio.sampleRate;
+    const ch0=audio.getChannelData(0);
+    const dur=Math.min(audio.duration,180);
+    const hop=512,frames=Math.floor(dur*sr/hop);
+    const env=new Float32Array(frames);
+    for(let i=0;i<frames;i++){
+      let s=0;const o=i*hop;
+      for(let j=0;j<hop;j+=4){const v=ch0[o+j]||0;s+=v*v;}
+      env[i]=Math.sqrt(s/(hop/4));
+    }
+    const onset=new Float32Array(frames);
+    for(let i=1;i<frames;i++){const d=env[i]-env[i-1];onset[i]=d>0?d:0;}
+    let mx=0;for(let i=0;i<frames;i++)if(onset[i]>mx)mx=onset[i];
+    if(mx<=0){toast('这段视频几乎没有声音，无法分析节拍');await ac.close();return;}
+    for(let i=0;i<frames;i++)onset[i]/=mx;
+    const fpsEnv=sr/hop;
+    prog(0.5,'计算 BPM…');
+    /* 直接扫描自相关延迟（而不是 BPM 网格），保证精度 */
+    const lagLo=Math.max(2,Math.floor(60/180*fpsEnv)),lagHi=Math.min(frames-2,Math.ceil(60/60*fpsEnv));
+    const scores=new Float32Array(lagHi+1);
+    for(let lag=lagLo;lag<=lagHi;lag++){
+      let s=0;
+      for(let j=0;j+lag<frames;j++)s+=onset[j]*onset[j+lag];
+      scores[lag]=s;
+    }
+    let bestLag=lagLo,bestVal=-1;
+    for(let lag=lagLo;lag<=lagHi;lag++)if(scores[lag]>bestVal){bestVal=scores[lag];bestLag=lag;}
+    let lagExact=bestLag;
+    if(bestLag>lagLo&&bestLag<lagHi){
+      const y0=scores[bestLag-1],y1=scores[bestLag],y2=scores[bestLag+1];
+      const den=y0-2*y1+y2;
+      if(Math.abs(den)>1e-9){
+        const d=0.5*(y0-y2)/den;
+        if(d>-1&&d<1)lagExact=bestLag+d;
+      }
+    }
+    const bestBpm=60*fpsEnv/lagExact;
+    prog(0.85,'对齐节拍相位…');
+    let bestPhase=0,bestPhaseVal=-1;
+    for(let ph=0;ph<lagExact;ph+=1){
+      let s=0;
+      for(let f=ph;f<frames;f+=lagExact){s+=onset[Math.floor(f)]||0;}
+      if(s>bestPhaseVal){bestPhaseVal=s;bestPhase=ph;}
+    }
+    S.project.beat={bpm:+bestBpm.toFixed(1),phase:+(bestPhase/fpsEnv).toFixed(3)};
+    saveProject();
+    renderMarks();renderAI();
+    toast('检测到节拍 '+bestBpm.toFixed(0)+' BPM');
+    try{await ac.close();}catch(e){}
+  }catch(e){toast('节拍分析失败：'+((e&&e.message)||e));}
+  AI.busy=false;renderAI();
+}
+function renderBeatTicks(){
+  document.querySelectorAll('#track .bt').forEach(e=>e.remove());
+  const b=S.project&&S.project.beat;
+  if(!b||!video.duration||!isFinite(video.duration))return;
+  const spb=60/b.bpm,track=$('track');
+  const maxTicks=600;
+  let n=0;
+  for(let t=b.phase;t<video.duration&&n<maxTicks;t+=spb,n++){
+    const d=document.createElement('div');d.className='bt';
+    d.style.left=(t/video.duration*100)+'%';
+    track.appendChild(d);
+  }
+}
+function snapKfToBeat(){
+  const b=S.project&&S.project.beat;
+  if(!b){toast('请先「分析音乐节拍」');return;}
+  if(!S.project.keyframes.length){toast('还没有关键帧');return;}
+  if(!confirm('把所有关键帧时间对齐到最近的节拍？'))return;
+  const spb=60/b.bpm;
+  for(const kf of S.project.keyframes){
+    const k=Math.round((kf.time-b.phase)/spb);
+    kf.time=Math.max(0,b.phase+k*spb);
+  }
+  S.project.keyframes.sort((a,b2)=>a.time-b2.time);
+  S.project.keyframes=S.project.keyframes.filter((k,i,arr)=>i===0||k.time-arr[i-1].time>0.25);
+  renderStrip();renderMarks();updateSubtitle();saveProject();
+  toast('关键帧已对齐节拍');
+}
+/* —— 跟练对比打分 —— */
+const CMP={stream:null,running:false,tick:null,sum:{},cnt:{}};
+function lmsFromCache(P,idx){const arr=[];for(let k=0;k<33;k++)arr.push(posePt(P,idx,k));return arr;}
+function anglesOf(lms){
+  const out=[];
+  for(const[name,a,b,c]of ANGLE_DEFS){
+    const la=lms[a],lb=lms[b],lc=lms[c];
+    const ok=(p)=>p&&(p.visibility==null||p.visibility>0.5);
+    if(ok(la)&&ok(lb)&&ok(lc)){
+      const d=angDeg(la,lb,lc);
+      if(d!=null)out.push([name,d]);
+    }
+  }
+  return out;
+}
+function drawCamSkeleton(lms){
+  const cv=$('camCanvas'),g=cv.getContext('2d');
+  const W=cv.clientWidth,H=cv.clientHeight;
+  if(!W||!H)return;
+  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
+  g.clearRect(0,0,W,H);
+  if(!lms)return;
+  const X=p=>(1-p.x)*W,Y=p=>p.y*H;
+  g.strokeStyle='#a78bfa';g.lineWidth=2;g.lineCap='round';
+  for(const[a,b]of POSE_CONN){
+    const pa=lms[a],pb=lms[b];
+    if((pa.visibility==null||pa.visibility>0.4)&&(pb.visibility==null||pb.visibility>0.4)){
+      if((pa.visibility==null||pa.visibility>0.4)&&(pb.visibility==null||pb.visibility>0.4)){
+        g.beginPath();g.moveTo(X(pa),Y(pa));g.lineTo(X(pb),Y(pb));g.stroke();
+      }
+    }
+  }
+}
+async function cmpOpen(){
+  if(!S.project){toast('请先导入教学视频');return;}
+  if(!S.project.pose){toast('请先对教学视频做「AI 姿态分析」，才能作为对比标准');return;}
+  $('cmpPanel').classList.add('show');
+  try{
+    await ensureAI(parseInt($('aiComplexity').value)||1);
+    CMP.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:320}},audio:false});
+    $('camVideo').srcObject=CMP.stream;
+  }catch(e){
+    $('cmpInfo').textContent='摄像头打开失败：'+((e&&e.message)||e);
+    toast('无法打开摄像头（需要 HTTPS 与权限）');
+  }
+}
+function cmpClose(){
+  cmpStop(false);
+  if(CMP.stream){CMP.stream.getTracks().forEach(t=>t.stop());CMP.stream=null;}
+  $('cmpPanel').classList.remove('show');
+}
+function cmpStart(){
+  if(CMP.running){return;}
+  CMP.running=true;CMP.sum={};CMP.cnt={};
+  $('cmpInfo').textContent='对比中… 播放教学视频跟着做';
+  const c=document.createElement('canvas');
+  CMP.tick=setInterval(async()=>{
+    if(!CMP.running)return;
+    const cv=$('camVideo');
+    if(!cv.videoWidth||cv.readyState<2)return;
+    if(c.width!==256){c.width=256;c.height=Math.max(2,Math.round(256*cv.videoHeight/cv.videoWidth));}
+    c.getContext('2d').drawImage(cv,0,0,c.width,c.height);
+    AI.last=undefined;
+    try{await AI.pose.send({image:c});}catch(e){return;}
+    const lms=AI.last;
+    drawCamSkeleton(lms&&lms.length===33?lms:null);
+    if(!lms||lms.length!==33)return;
+    const P=S.project.pose;
+    const idx=Math.max(0,Math.min(P.n-1,Math.round(video.currentTime*P.sampleFps)));
+    const ref=anglesOf(lmsFromCache(P,idx));
+    const usr=anglesOf(lms);
+    let worst=null,worstD=0;
+    for(const[n,d]of usr){
+      const r=ref.find(x=>x[0]===n);
+      if(!r)continue;
+      let diff=Math.abs(d-r[1]);if(diff>180)diff=360-diff;
+      CMP.sum[n]=(CMP.sum[n]||0)+diff;CMP.cnt[n]=(CMP.cnt[n]||0)+1;
+      if(diff>worstD){worstD=diff;worst=[n,d,r[1]];}
+    }
+    if(worst)$('cmpInfo').textContent='差距最大：'+worst[0]+' 你 '+Math.round(worst[1])+'° / 标准 '+Math.round(worst[2])+'°';
+  },130);
+}
+function cmpStop(showResult){
+  CMP.running=false;
+  if(CMP.tick){clearInterval(CMP.tick);CMP.tick=null;}
+  const names=Object.keys(CMP.sum);
+  if(showResult&&names.length){
+    let tot=0;
+    const rows=names.map(n=>({n,avg:CMP.sum[n]/Math.max(1,CMP.cnt[n])}));
+    for(const r of rows)tot+=r.avg;
+    const overall=tot/rows.length;
+    const score=Math.max(0,Math.min(100,Math.round(100-overall*1.5)));
+    rows.sort((a,b)=>b.avg-a.avg);
+    $('cmpInfo').innerHTML='综合得分 <b style="color:#ffd166">'+score+'</b> / 100<br>最需改进：'+rows.slice(0,2).map(r=>r.n+' 平均差 '+Math.round(r.avg)+'°').join('，');
+    toast('对比结束：'+score+' 分');
+  }
+}
+$('btnExportSheet').onclick=exportTeachSheet;
+$('btnBeat').onclick=analyzeBeat;
+$('btnSnapBeat').onclick=snapKfToBeat;
+$('btnCmpOpen').onclick=cmpOpen;
+$('btnCmpStart').onclick=cmpStart;
+$('btnCmpStop').onclick=()=>cmpStop(true);
+$('btnCmpClose').onclick=cmpClose;
 
 /* ===================== 项目管理 ===================== */
 async function importFile(file){
