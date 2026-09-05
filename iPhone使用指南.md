@@ -34,7 +34,7 @@
 我（或你）改了 `index.html` 后，在 dance-coach 文件夹运行：
 
 ```
-python deploy_github.py push
+python 一键发布更新.py push
 ```
 
 约 1 分钟自动发布（脚本会校验线上内容确实是新版），手机 Safari 刷新即生效。
